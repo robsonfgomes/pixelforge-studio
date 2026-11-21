@@ -86,7 +86,7 @@ app/
 │   │   ├── Enums/          GenerationStatus, GenerationFailureReason, ImageSize, ImageQuality
 │   │   ├── Exceptions/
 │   │   ├── Models/         Generation, WebhookEvent
-│   │   └── QueryBuilders/  GenerationQueryBuilder
+│   │   └── QueryBuilders/  GenerationQueryBuilder (forUser, inProgress, recentlyActive)
 │   ├── Pricing/
 │   │   ├── Actions/        GetPriceTable (cache + last-known fallback), InvalidatePriceTable
 │   │   ├── Data/           PriceTableData, TokenRatesData, TokenCountsData, CostEstimateData
@@ -120,8 +120,32 @@ exempt from these folder rules.
 
 ### Product and UX
 
-- One page, inspired by PromptEdit's own image tool: composer on the left, history on the right, dark theme. It
-  replaces the starter kit's Dashboard as the page after login; the Dashboard goes away (M4).
+- One page, `GET /generations` (`generations.index`), inspired by PromptEdit's own image tool: we follow its
+  patterns, not its brand (accent color, logo and copy are ours). It is Fortify's `home`, so login and registration
+  land on it; the starter kit's Dashboard (route, page, test and nav item) is removed. The app keeps the name
+  "Pixelforge Studio" (the no-provider rule applies to error copy, not to the app name). The generations page and the
+  Settings screens use the starter kit's header layout, not the sidebar one: there is no side menu, and the starter
+  kit's Repository, Documentation and search links go away.
+- Dark theme by default when the user hasn't picked one; the starter kit's Appearance setting keeps working.
+- Layout:
+  - A top bar: logo and name on the left; the user menu (Settings, Log out) on the right. In M6, the balance chip with
+    a "+" (Buy credits) button goes next to the user menu.
+  - Below it, two columns at the full height of the screen: the composer on the left and the history on the right,
+    taking the rest. On narrow (mobile) screens they stack: composer on top, history below.
+  - Composer panel on the left, fixed width, with its own scroll. Sections with small uppercase labels (REFERENCE
+    IMAGES, PROMPT, ASPECT RATIO, QUALITY); counters on the references (0/4) and the prompt (0/4000). Aspect ratio
+    (with an icon of the shape) and quality side by side, as selects.
+  - A footer pinned to the bottom of the panel: the estimate (or its state) on the left; a large Generate button on
+    the right with the Ctrl/⌘ + Enter hint. The shortcut works and follows the same rules as the button. In M6 the
+    balance goes under the estimate, in a warning color when it isn't enough.
+  - The area on the right: a plain title and the history as cards; a centered empty state with an icon, a title
+    and one line of guidance.
+  - Out of scope: model picker, video/audio tabs, upscale, number of generations, projects, search and the
+    grid/list toggle (the last two are next steps).
+- Generate is disabled while submitting, while the prompt is empty (no estimate request either: "Enter a prompt to
+  see the cost"), while the estimate is invalid or unavailable, and until the estimate for the current input has
+  arrived (debounce and request in flight), so the user always saw the price of what they send. After submitting,
+  the form keeps its values so the user can tweak and generate again.
 - Aspect ratio 1:1 / 3:2 / 2:3 maps to `1024x1024` / `1536x1024` / `1024x1536`. Quality low / medium / high.
   The UI preselects 1:1 and medium; we always send both to Pixelforge. The UI does the aspect ratio mapping: our
   endpoints receive the Pixelforge size (`1024x1024`), validated by the `ImageSize` enum.
@@ -130,15 +154,24 @@ exempt from these folder rules.
   in-flight limit (next steps).
 - Estimate box: "**~$0.3929** · at most $0.4476", plus "The final cost depends on processing. Failed generations
   are free." Updated by a debounced (300 ms) call to the estimate endpoint; validation errors show inline instead.
+  Only the latest response may update the box: every change cancels the request in flight before scheduling the
+  next one (`useHttp` doesn't cancel the previous request by itself). 503 and 429 show "Estimate unavailable".
 - If no price table is available (never fetched and `/v1/pricing` fails), the estimate shows "Estimate unavailable"
   and Generate is disabled; the server rejects the request too.
 - Estimate endpoint: `POST /generations/estimate`, signed-in users only, `estimate` throttle, the same validation as
   generating (prompt up to 4,000 Unicode characters, size, quality, up to 4 http/https URLs). It returns
   `data.min`, `data.typical` and `data.max`, each `{amount, display}`; with no price table it answers 503
   "Estimate unavailable".
-- History card: prompt, size, quality, status badge, estimated and actual cost, the image, timestamps. A `queued`
-  generation without `submitted_at` shows "Waiting to submit" (or "Retrying…"). Failed cards show a friendly
-  reason and "You were not charged". After `image_url_expires_at` the image becomes an "Image expired" placeholder.
+- History: the user's 50 most recent generations, newest first (pagination or infinite scroll are next steps).
+- History card: prompt, size, quality, status badge, estimated and actual cost, the image, timestamps.
+  `GenerationResource` sends `submissionState`: `waiting` (queued, `submit_attempts` 0), `retrying` (queued,
+  attempts > 0) or `taking_longer` (not final, and either uncertain for longer than the uncertain-outcome window or
+  older than the page polling window). Failed cards show the friendly reason (`failureMessage`) and "You were not
+  charged". The server sends `imageUrlExpiresAt`; the card shows an "Image expired" placeholder once it has passed or
+  when the image fails to load.
+- The page polls `generations` and `hasInProgress` every 2.5 s (`usePoll`, `mode: 'rest'`, started and stopped by
+  `hasInProgress`). `hasInProgress` uses `recentlyActive()`: not final and created within the page polling window
+  (`config/generations.php`, 120 minutes). `inProgress()` keeps its domain meaning (not final).
 - Amounts show 4 decimals; the exact amount (9 decimals) is in a tooltip. Every amount the UI shows (estimates,
   history costs) is sent by the server as the exact value (9-decimal string) plus a formatted display value; the
   frontend never rounds. Display rounding: min down, typical half-up, max up, actual cost half-up (the exact value
@@ -261,7 +294,9 @@ environment variables.
 - `config/services.php` → `pixelforge`: the provider connection only. `base_url`, `api_key`, `webhook_secret`,
   `pricing_cache_ttl` (from `PIXELFORGE_*`), `connect_timeout` 10 s and `timeout` 30 s.
 - `config/generations.php`: our business rules. Markup percent (25), throttles (10 and 60 per minute), the submit
-  retry window (10 minutes), the uncertain-outcome retry window (60 minutes) and the polling delays.
+  retry window (10 minutes), the uncertain-outcome retry window (60 minutes), the polling delays and the page
+  polling window (120 minutes: the uncertain-outcome window plus the backend polling, after which the page stops
+  polling a generation that is still not final).
 
 ## Data model
 
@@ -340,12 +375,14 @@ one charge.
 
 **M4 – Page**
 Before starting: check `usePoll` and partial reloads in the Inertia v3 docs.
-`GenerationQueryBuilder` (`forUser()`, `inProgress()`), `GenerationPageViewModel` (lazy props), `GenerationResource`
-(exact + display values for every amount, friendly failure text from `GenerationFailureReason`), the Vue page
-(composer, estimate, history, cards, empty and error states), `usePoll`, Wayfinder routes, nav and branding. The
-page becomes the page after login and the starter kit's Dashboard is removed.
-Tests: page props for a user (only their generations, `hasInProgress`), partial reload returns only the requested
-props.
+`GenerationQueryBuilder` (`forUser()`, `inProgress()`, `recentlyActive()`), `GenerationController@index`,
+`GenerationPageViewModel` (lazy props), `GenerationResource` (exact + display values for every amount,
+`submissionState`, friendly failure text from `GenerationFailureReason`), the Vue page (composer, estimate, history,
+cards, empty and error states, Ctrl/⌘ + Enter), `usePoll`, Wayfinder routes, nav and branding, dark default. Fortify
+`home` → `/generations`; the Dashboard route, page and test are removed.
+Tests: page props for a user (only their 50 latest generations, `hasInProgress` with the polling window), partial
+reload returns only the requested props, the resource's values and states, login and registration land on the page.
+No frontend test framework: the frontend is covered by `vue-tsc`, the linter and a manual test script.
 Manual: every keyword (`[blocked]`, `[overloaded]`, `[fail]`, `[slow]`, `[duplicate]`, `[succeed]`) shows a clear
 state; four generations at once show one waiting for a slot.
 
@@ -369,6 +406,7 @@ Tests: grouping by completion day in UTC, totals, access control, comparison aga
 ## Optional / next steps
 
 - "Check status" button on a generation whose polling gave up.
+- Pagination or infinite scroll for the history; search; grid/list toggle.
 - Per-user limit on generations in progress.
 - Download images to object storage to keep them after 24 hours.
 - WebSockets (Reverb) instead of polling the page.
