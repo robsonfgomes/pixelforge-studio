@@ -1,7 +1,22 @@
 <?php
 
-test('returns a successful response', function () {
-    $response = $this->get(route('home'));
+declare(strict_types=1);
 
-    $response->assertOk();
-});
+namespace Tests\Feature;
+
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
+
+class ExampleTest extends TestCase
+{
+    use RefreshDatabase;
+
+    #[Test]
+    public function returnsASuccessfulResponse(): void
+    {
+        $response = $this->get(route('home'));
+
+        $response->assertOk();
+    }
+}

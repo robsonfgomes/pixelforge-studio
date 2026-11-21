@@ -1,16 +1,32 @@
 <?php
 
+declare(strict_types=1);
+
+namespace Tests\Feature;
+
 use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
 
-test('guests are redirected to the login page', function () {
-    $response = $this->get(route('dashboard'));
-    $response->assertRedirect(route('login'));
-});
+class DashboardTest extends TestCase
+{
+    use RefreshDatabase;
 
-test('authenticated users can visit the dashboard', function () {
-    $user = User::factory()->create();
-    $this->actingAs($user);
+    #[Test]
+    public function guestsAreRedirectedToTheLoginPage(): void
+    {
+        $response = $this->get(route('dashboard'));
+        $response->assertRedirect(route('login'));
+    }
 
-    $response = $this->get(route('dashboard'));
-    $response->assertOk();
-});
+    #[Test]
+    public function authenticatedUsersCanVisitTheDashboard(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $response = $this->get(route('dashboard'));
+        $response->assertOk();
+    }
+}
