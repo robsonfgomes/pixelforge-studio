@@ -317,8 +317,9 @@ exempt from these folder rules.
     and optionally the throttles. Plain environment variables, not Secrets Manager (they belong to one environment);
     the user types every value; the agent never sees them.
   - The production key's webhook URL is `https://pixelforge-studio-production-nbzjkg.laravel.cloud/webhooks/pixelforge`.
-- Cloud operations go through the `cloud` CLI installed globally on the user's machine (not in `composer.json`); the
-  agent proposes each command and the user approves it before it runs.
+- The user operates the Laravel Cloud dashboard; the agent has no access to production. Deploys happen by pushing
+  `main` (push-to-deploy), and every push needs the user's explicit approval. The user checks deployments,
+  variables and the managed queue in the dashboard and passes on what the agent needs.
 - Redis/Valkey holds cache, sessions, locks and rate limiters. Reconnection uses the skeleton's
   `config/database.php` retry and backoff, which is what the Laravel 13 docs recommend for Valkey's maintenance
   restarts: `max_retries` 3, `decorrelated_jitter`, 100–1000 ms; Laravel also retries safe reads once.
@@ -437,17 +438,35 @@ state; four generations at once show one waiting for a slot.
   `config('demo.email')` (`demo@example.com`) only when missing, with the password from `config('demo.password')`
   (`DEMO_USER_PASSWORD`, read in `config/demo.php` so it works with a cached config), and makes sure it is an admin;
   running it again changes nothing, and it refuses to create the user without a password. Everything about the demo
-  user lives in `config/demo.php` (in M6, its initial credit too); `config/app.php` stays the framework's. Run once
-  with `cloud command:run` (never in the deploy commands). The credentials go only in the submission form, not in
-  the README. In M6, the demo user's initial credit must be idempotent too.
-- Deploy to Laravel Cloud after approval. Build: `composer install --no-dev --optimize-autoloader && npm ci && npm run
-  build && php artisan optimize`. Deploy command: `php artisan migrate --force` only.
+  user lives in `config/demo.php` (in M6, its initial credit too); `config/app.php` stays the framework's. It runs in
+  the deploy commands, after the migrations; being idempotent, running it on every deploy changes nothing, and once
+  the user exists a missing `DEMO_USER_PASSWORD` doesn't break a deploy. The credentials go only in the submission
+  form, not in the README. In M6, the demo user's initial credit must be idempotent too.
+- Deploy by pushing `main` (push-to-deploy), after the user's approval for that push. Build:
+  `composer install --no-dev --optimize-autoloader && npm ci && npm run build && php artisan optimize`. Deploy
+  command: `php artisan migrate --force && php artisan db:seed --class=DemoUserSeeder --force`.
 - First-deploy checks, because the Cloud docs don't cover them: the managed queue runs our jobs (`cloud` connection),
   `release()` with `Retry-After` works (`[overloaded]`) and delayed polling works (`[slow]`).
 - Keyword scenarios on production: one generation each for `[succeed]`, `[fail]`, `[duplicate]`, `[slow]`,
   `[blocked]` and `[overloaded]`, checking the final state, one row per webhook event id and the charge.
-- Cost check: the agent sums `provider_cost` per UTC completion day (`cloud tinker`); the user runs `GET /v1/usage`
-  with the production key and pastes only the result; every day must match exactly.
+- Cost check: the user runs this read-only query on the production database with a SQL client (credentials from
+  the dashboard), runs `GET /v1/usage` with the production key, and pastes only the results; every UTC day must match
+  exactly (generations, tokens and `cost_usd`). In M7 the admin report makes this comparison.
+
+  ```sql
+  select
+      completed_at::date as day_utc,
+      count(*) as generations,
+      sum(input_text_tokens) as input_text_tokens,
+      sum(input_image_tokens) as input_image_tokens,
+      sum(output_tokens) as output_tokens,
+      sum(reasoning_tokens) as reasoning_tokens,
+      (sum(provider_cost)::numeric / 1000000000)::numeric(20, 9) as cost_usd
+  from generations
+  where status = 'succeeded'
+  group by completed_at::date
+  order by day_utc;
+  ```
 - README: the sections in `CLAUDE.md`, with commands the agent ran from a clean state (`docker compose down -v`, only
   at the end of M5, after the production check); the user runs the ngrok tunnel and confirms.
 - Leave a few generations on production.
