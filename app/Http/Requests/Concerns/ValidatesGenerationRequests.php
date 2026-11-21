@@ -23,10 +23,10 @@ trait ValidatesGenerationRequests
     public function rules(): array
     {
         return [
-            'prompt' => ['required', 'string', 'max:4000'],
+            'prompt' => ['required', 'string', 'max:'.GenerationRequestData::MAX_PROMPT_LENGTH],
             'size' => ['required', Rule::enum(ImageSize::class)],
             'quality' => ['required', Rule::enum(ImageQuality::class)],
-            'reference_images' => ['sometimes', 'list', 'max:4'],
+            'reference_images' => ['sometimes', 'list', 'max:'.GenerationRequestData::MAX_REFERENCE_IMAGES],
             'reference_images.*' => ['required', 'string', 'url:http,https'],
         ];
     }

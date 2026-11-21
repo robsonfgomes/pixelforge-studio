@@ -8,8 +8,10 @@ use App\Domain\Generations\Models\Generation;
 use App\Integrations\Pixelforge\PixelforgeApi;
 use App\Jobs\SubmitGenerationJob;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\Sequence;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
+use Inertia\Testing\AssertableInertia as Assert;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Fakes\FakePixelforgeApi;
 use Tests\TestCase;
@@ -17,6 +19,88 @@ use Tests\TestCase;
 class GenerationControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    #[Test]
+    public function itRedirectsAGuestAwayFromThePage(): void
+    {
+        $response = $this->get(route('generations.index'));
+
+        $response->assertRedirect(route('login'));
+    }
+
+    #[Test]
+    public function itShowsTheUsersFiftyLatestGenerationsNewestFirst(): void
+    {
+        $this->freezeSecond();
+        $user = User::factory()->create();
+        Generation::factory()->for($user)->count(51)->sequence(
+            fn (Sequence $sequence): array => ['created_at' => now()->subMinutes($sequence->index)],
+        )->create();
+        $newest = Generation::query()->where('user_id', $user->id)->orderByDesc('created_at')->firstOrFail();
+        Generation::factory()->create(['created_at' => now()->addMinute()]);
+
+        $response = $this->actingAs($user)->get(route('generations.index'));
+
+        $response->assertOk()->assertInertia(fn (Assert $page): Assert => $page
+            ->component('generations/Index')
+            ->has('generations', 50)
+            ->where('generations.0.id', $newest->id),
+        );
+    }
+
+    #[Test]
+    public function itReportsProgressOnlyForGenerationsWithinThePollingWindow(): void
+    {
+        $user = User::factory()->create();
+        Generation::factory()->for($user)->succeeded()->create();
+        Generation::factory()->for($user)->processing()->create(['created_at' => now()->subMinutes(121)]);
+
+        $stale = $this->actingAs($user)->get(route('generations.index'));
+        Generation::factory()->for($user)->processing()->create();
+        $recent = $this->actingAs($user)->get(route('generations.index'));
+
+        $stale->assertInertia(fn (Assert $page): Assert => $page->where('hasInProgress', false));
+        $recent->assertInertia(fn (Assert $page): Assert => $page->where('hasInProgress', true));
+    }
+
+    #[Test]
+    public function itSendsTheComposerOptionsAndLimits(): void
+    {
+        $response = $this->actingAs(User::factory()->create())->get(route('generations.index'));
+
+        $response->assertInertia(fn (Assert $page): Assert => $page->where('composer', [
+            'sizes' => [
+                ['value' => '1024x1024', 'aspectRatio' => '1:1'],
+                ['value' => '1536x1024', 'aspectRatio' => '3:2'],
+                ['value' => '1024x1536', 'aspectRatio' => '2:3'],
+            ],
+            'qualities' => [
+                ['value' => 'low', 'label' => 'Low'],
+                ['value' => 'medium', 'label' => 'Medium'],
+                ['value' => 'high', 'label' => 'High'],
+            ],
+            'defaults' => ['size' => '1024x1024', 'quality' => 'medium'],
+            'limits' => ['promptLength' => 4000, 'referenceImages' => 4],
+        ]));
+    }
+
+    #[Test]
+    public function itReloadsOnlyTheHistoryAndProgressWhenAsked(): void
+    {
+        $user = User::factory()->create();
+        Generation::factory()->for($user)->processing()->create();
+
+        $response = $this->actingAs($user)->get(route('generations.index'));
+
+        $response->assertInertia(fn (Assert $page): Assert => $page
+            ->has('composer')
+            ->reloadOnly(['generations', 'hasInProgress'], fn (Assert $reload): Assert => $reload
+                ->has('generations', 1)
+                ->where('hasInProgress', true)
+                ->missing('composer'),
+            ),
+        );
+    }
 
     #[Test]
     public function itRedirectsAGuestToTheLoginPage(): void
@@ -37,13 +121,12 @@ class GenerationControllerTest extends TestCase
         $user = User::factory()->create();
 
         $response = $this->actingAs($user)
-            ->from(route('dashboard'))
             ->post(route('generations.store'), $this->validPayload([
                 'estimated_charge' => 1,
                 'estimated_max_charge' => 1,
             ]));
 
-        $response->assertRedirect(route('dashboard'));
+        $response->assertRedirect(route('generations.index'));
         $generation = Generation::query()->sole();
         $this->assertTrue($generation->user->is($user));
         $this->assertSame(412_562_500, $generation->estimated_charge->nanodollars);

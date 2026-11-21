@@ -7,6 +7,7 @@ namespace App\Providers;
 use App\Domain\Generations\Actions\SubmitGeneration;
 use App\Domain\Pricing\Actions\GetPriceTable;
 use App\Domain\Pricing\PricingCalculator;
+use App\Http\ViewModels\GenerationPageViewModel;
 use App\Integrations\Pixelforge\HttpPixelforgeClient;
 use App\Integrations\Pixelforge\PixelforgeApi;
 use App\Integrations\Pixelforge\WebhookSignature;
@@ -47,6 +48,10 @@ class AppServiceProvider extends ServiceProvider
         $this->app->when(SubmitGeneration::class)
             ->needs('$firstPollDelaySeconds')
             ->give(fn (): int => config('generations.polling_delays_seconds')[0]);
+
+        $this->app->when(GenerationPageViewModel::class)
+            ->needs('$pagePollingWindowMinutes')
+            ->giveConfig('generations.page_polling_window_minutes');
 
         $this->app->bind(WebhookSignature::class, fn (): WebhookSignature => new WebhookSignature(
             config('services.pixelforge.webhook_secret'),

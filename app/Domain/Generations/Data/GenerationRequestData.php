@@ -9,6 +9,10 @@ use App\Domain\Generations\Enums\ImageSize;
 
 final readonly class GenerationRequestData
 {
+    public const int MAX_PROMPT_LENGTH = 4_000;
+
+    public const int MAX_REFERENCE_IMAGES = 4;
+
     /**
      * @param  list<string>  $referenceImages
      */

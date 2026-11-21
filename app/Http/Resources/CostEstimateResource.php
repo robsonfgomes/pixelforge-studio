@@ -6,7 +6,7 @@ namespace App\Http\Resources;
 
 use App\Domain\Pricing\Data\CostEstimateData;
 use App\Domain\Pricing\Enums\DisplayRounding;
-use App\Domain\Pricing\ValueObjects\Money;
+use App\Http\Resources\Concerns\FormatsMoney;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -15,6 +15,8 @@ use Illuminate\Http\Resources\Json\JsonResource;
  */
 class CostEstimateResource extends JsonResource
 {
+    use FormatsMoney;
+
     /**
      * @return array<string, array{amount: string, display: string}>
      */
@@ -25,13 +27,5 @@ class CostEstimateResource extends JsonResource
             'typical' => $this->amount($this->resource->typicalCharge, DisplayRounding::HalfUp),
             'max' => $this->amount($this->resource->maxCharge, DisplayRounding::Up),
         ];
-    }
-
-    /**
-     * @return array{amount: string, display: string}
-     */
-    private function amount(Money $money, DisplayRounding $rounding): array
-    {
-        return ['amount' => $money->toDecimalString(), 'display' => $money->format($rounding)];
     }
 }
