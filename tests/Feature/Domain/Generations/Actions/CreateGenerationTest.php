@@ -12,9 +12,12 @@ use App\Domain\Generations\Enums\ImageSize;
 use App\Domain\Generations\Models\Generation;
 use App\Domain\Pricing\Exceptions\PriceTableUnavailable;
 use App\Integrations\Pixelforge\PixelforgeApi;
+use App\Jobs\PollGenerationJob;
+use App\Jobs\SubmitGenerationJob;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Fakes\FakePixelforgeApi;
 use Tests\TestCase;
@@ -26,6 +29,7 @@ class CreateGenerationTest extends TestCase
     #[Test]
     public function itStoresAQueuedGenerationWithTheEstimateTheUserSaw(): void
     {
+        Queue::fake([SubmitGenerationJob::class]);
         $this->app->instance(PixelforgeApi::class, FakePixelforgeApi::withDocumentedPrices());
         $user = User::factory()->create();
 
@@ -48,6 +52,7 @@ class CreateGenerationTest extends TestCase
     #[Test]
     public function itSubmitsTheGenerationOnlyAfterTheTransactionCommits(): void
     {
+        Queue::fake([PollGenerationJob::class]);
         $pixelforge = FakePixelforgeApi::withDocumentedPrices();
         $this->app->instance(PixelforgeApi::class, $pixelforge);
         $user = User::factory()->create();

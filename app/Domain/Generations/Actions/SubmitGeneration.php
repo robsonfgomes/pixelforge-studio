@@ -15,6 +15,7 @@ use App\Integrations\Pixelforge\Exceptions\PixelforgeRateLimited;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeRejected;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeUnavailable;
 use App\Integrations\Pixelforge\PixelforgeApi;
+use App\Jobs\PollGenerationJob;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -31,7 +32,9 @@ final readonly class SubmitGeneration
     public function __construct(
         private PixelforgeApi $pixelforge,
         private FailGeneration $failGeneration,
+        private ApplyProviderGeneration $applyProviderGeneration,
         private InvalidatePriceTable $invalidatePriceTable,
+        private int $firstPollDelaySeconds,
     ) {}
 
     /**
@@ -113,13 +116,27 @@ final readonly class SubmitGeneration
 
     private function recordSubmission(Generation $generation, ProviderGenerationData $providerGeneration): void
     {
-        DB::transaction(function () use ($generation, $providerGeneration): void {
+        $setSubmittedAt = DB::transaction(function () use ($generation, $providerGeneration): bool {
             $locked = Generation::query()->whereKey($generation->getKey())->lockForUpdate()->firstOrFail();
+
+            if ($locked->submitted_at !== null) {
+                return false;
+            }
+
             $locked->pixelforge_id ??= $providerGeneration->id;
             $locked->rates ??= $providerGeneration->rates->toArray();
-            $locked->submitted_at ??= now();
+            $locked->submitted_at = now();
             $locked->save();
+
+            return true;
         });
+
+        $this->applyProviderGeneration->handle($generation, $providerGeneration);
+
+        if ($setSubmittedAt && ! $generation->refresh()->status->isFinal()) {
+            PollGenerationJob::dispatch($generation->id, attempt: 1)
+                ->delay($this->firstPollDelaySeconds);
+        }
 
         $estimatedRates = PriceTableData::fromArray($generation->estimate_price_table)->rates;
 

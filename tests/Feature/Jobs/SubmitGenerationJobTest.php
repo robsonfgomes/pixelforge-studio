@@ -10,6 +10,7 @@ use App\Integrations\Pixelforge\Exceptions\PixelforgeOverloaded;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeRateLimited;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeUnavailable;
 use App\Integrations\Pixelforge\PixelforgeApi;
+use App\Jobs\PollGenerationJob;
 use App\Jobs\SubmitGenerationJob;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Queue\MaxAttemptsExceededException;
@@ -154,6 +155,7 @@ class SubmitGenerationJobTest extends TestCase
 
     private function fakePixelforge(): FakePixelforgeApi
     {
+        Queue::fake([PollGenerationJob::class]);
         $pixelforge = FakePixelforgeApi::withDocumentedPrices();
         $this->app->instance(PixelforgeApi::class, $pixelforge);
 

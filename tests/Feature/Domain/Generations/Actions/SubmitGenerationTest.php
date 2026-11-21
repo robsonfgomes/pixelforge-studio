@@ -14,9 +14,11 @@ use App\Integrations\Pixelforge\Exceptions\PixelforgeRateLimited;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeRejected;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeUnavailable;
 use App\Integrations\Pixelforge\PixelforgeApi;
+use App\Jobs\PollGenerationJob;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\Attributes\TestWith;
@@ -249,6 +251,58 @@ class SubmitGenerationTest extends TestCase
         $this->submit($generation);
 
         $this->assertSame([], $pixelforge->createRequests);
+        Queue::assertNotPushed(PollGenerationJob::class);
+    }
+
+    #[Test]
+    public function itStartsPollingFortyFiveSecondsAfterTheSubmission(): void
+    {
+        $this->fakePixelforge();
+        $generation = Generation::factory()->create();
+
+        $this->submit($generation);
+
+        Queue::assertPushed(
+            PollGenerationJob::class,
+            fn (PollGenerationJob $job): bool => $job->generationId === $generation->id
+                && $job->attempt === 1
+                && $job->delay === 45,
+        );
+    }
+
+    #[Test]
+    public function itAppliesAReplayThatIsAlreadyFinalAndDoesNotPoll(): void
+    {
+        $pixelforge = $this->fakePixelforge();
+        $generation = Generation::factory()->create();
+        $pixelforge->respondToCreateWith(
+            FakePixelforgeApi::providerGeneration($generation->id, GenerationStatus::Succeeded),
+        );
+
+        $this->submit($generation);
+
+        $generation->refresh();
+        $this->assertSame(GenerationStatus::Succeeded, $generation->status);
+        $this->assertSame(381_887_500, $generation->charge?->nanodollars);
+        $this->assertNotNull($generation->submitted_at);
+        Queue::assertNotPushed(PollGenerationJob::class);
+    }
+
+    #[Test]
+    public function itStillStartsPollingWhenAWebhookArrivedBeforeTheCreateResponse(): void
+    {
+        $this->fakePixelforge();
+        $generation = Generation::factory()->create([
+            'status' => GenerationStatus::Processing,
+            'pixelforge_id' => FakePixelforgeApi::PIXELFORGE_ID,
+        ]);
+
+        $this->submit($generation);
+
+        $generation->refresh();
+        $this->assertSame(GenerationStatus::Processing, $generation->status);
+        $this->assertNotNull($generation->submitted_at);
+        Queue::assertPushed(PollGenerationJob::class, 1);
     }
 
     #[Test]
@@ -264,6 +318,7 @@ class SubmitGenerationTest extends TestCase
 
     private function fakePixelforge(): FakePixelforgeApi
     {
+        Queue::fake([PollGenerationJob::class]);
         $pixelforge = FakePixelforgeApi::withDocumentedPrices();
         $this->app->instance(PixelforgeApi::class, $pixelforge);
 
