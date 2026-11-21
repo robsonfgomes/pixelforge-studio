@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace App\Domain\Generations\Data;
 
 use App\Domain\Generations\Enums\GenerationStatus;
+use App\Domain\Pricing\Data\TokenCountsData;
 use App\Domain\Pricing\Data\TokenRatesData;
+use Carbon\CarbonImmutable;
+use UnexpectedValueException;
 
 final readonly class ProviderGenerationData
 {
@@ -14,6 +17,13 @@ final readonly class ProviderGenerationData
         public GenerationStatus $status,
         public ?string $generationId,
         public TokenRatesData $rates,
+        public ?TokenCountsData $usage = null,
+        public ?string $imageUrl = null,
+        public ?CarbonImmutable $imageUrlExpiresAt = null,
+        public ?string $errorCode = null,
+        public ?string $errorMessage = null,
+        public ?CarbonImmutable $startedAt = null,
+        public ?CarbonImmutable $completedAt = null,
     ) {}
 
     /**
@@ -23,11 +33,35 @@ final readonly class ProviderGenerationData
      */
     public static function fromArray(array $generation): self
     {
+        $status = GenerationStatus::from($generation['status']);
+        $usage = $generation['usage'] ?? null;
+
+        if ($status === GenerationStatus::Succeeded && ! is_array($usage)) {
+            throw new UnexpectedValueException("The succeeded generation [{$generation['id']}] has no usage.");
+        }
+
         return new self(
             $generation['id'],
-            GenerationStatus::from($generation['status']),
+            $status,
             $generation['metadata']['generation_id'] ?? null,
             TokenRatesData::fromArray($generation['rates']),
+            is_array($usage) ? new TokenCountsData(
+                (int) $usage['input_text_tokens'],
+                (int) $usage['input_image_tokens'],
+                (int) $usage['output_tokens'],
+                (int) $usage['reasoning_tokens'],
+            ) : null,
+            $generation['image_url'] ?? null,
+            self::timestamp($generation['image_url_expires_at'] ?? null),
+            $generation['error']['code'] ?? null,
+            $generation['error']['message'] ?? null,
+            self::timestamp($generation['started_at'] ?? null),
+            self::timestamp($generation['completed_at'] ?? null),
         );
+    }
+
+    private static function timestamp(?string $value): ?CarbonImmutable
+    {
+        return $value === null ? null : CarbonImmutable::parse($value)->utc();
     }
 }

@@ -8,6 +8,7 @@ use App\Domain\Generations\Data\GenerationRequestData;
 use App\Domain\Generations\Enums\GenerationStatus;
 use App\Domain\Generations\Enums\ImageQuality;
 use App\Domain\Generations\Enums\ImageSize;
+use App\Domain\Pricing\Data\TokenCountsData;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeOverloaded;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeRateLimited;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeRejected;
@@ -228,6 +229,85 @@ class HttpPixelforgeClientTest extends TestCase
         $exception = $this->createGenerationFailure();
 
         $this->assertInstanceOf(PixelforgeUnavailable::class, $exception);
+    }
+
+    #[Test]
+    public function itRetrievesASucceededGenerationWithItsUsageImageAndTimes(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            'pixelforge.test/v1/generations/gen_01JC2Z8Q4N6V0M3H7X5T9R2B1K' => Http::response(
+                FakePixelforgeApi::generationObject(self::GENERATION_ID, GenerationStatus::Succeeded),
+            ),
+        ]);
+
+        $generation = $this->client()->retrieveGeneration('gen_01JC2Z8Q4N6V0M3H7X5T9R2B1K');
+
+        $this->assertSame(GenerationStatus::Succeeded, $generation->status);
+        $this->assertEquals(new TokenCountsData(12, 765, 6_450, 3_184), $generation->usage);
+        $this->assertStringStartsWith('https://pixelforge.promptedit.dev/images/', (string) $generation->imageUrl);
+        $this->assertSame('2026-11-05T14:03:29+00:00', $generation->imageUrlExpiresAt?->toIso8601String());
+        $this->assertSame('2026-11-04T14:03:13+00:00', $generation->startedAt?->toIso8601String());
+        $this->assertSame('2026-11-04T14:03:29+00:00', $generation->completedAt?->toIso8601String());
+        $this->assertNull($generation->errorCode);
+        Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
+            && $request->header('Authorization') === ['Bearer test-api-key']);
+    }
+
+    #[Test]
+    public function itRetrievesAFailedGenerationWithPixelforgesErrorCodeAndMessage(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            'pixelforge.test/v1/generations/gen_01JC2Z8Q4N6V0M3H7X5T9R2B1K' => Http::response(
+                FakePixelforgeApi::generationObject(self::GENERATION_ID, GenerationStatus::Failed),
+            ),
+        ]);
+
+        $generation = $this->client()->retrieveGeneration('gen_01JC2Z8Q4N6V0M3H7X5T9R2B1K');
+
+        $this->assertSame(GenerationStatus::Failed, $generation->status);
+        $this->assertSame('internal_error', $generation->errorCode);
+        $this->assertStringStartsWith('Something went wrong on our side', (string) $generation->errorMessage);
+        $this->assertNull($generation->usage);
+    }
+
+    #[Test]
+    public function itReportsASucceededGenerationWithoutUsageAsUnavailable(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            'pixelforge.test/v1/generations/gen_01JC2Z8Q4N6V0M3H7X5T9R2B1K' => Http::response(
+                FakePixelforgeApi::generationObject(
+                    self::GENERATION_ID,
+                    GenerationStatus::Succeeded,
+                    ['usage' => null],
+                ),
+            ),
+        ]);
+
+        $this->expectException(PixelforgeUnavailable::class);
+
+        $this->client()->retrieveGeneration('gen_01JC2Z8Q4N6V0M3H7X5T9R2B1K');
+    }
+
+    #[Test]
+    #[TestWith([404, 'not_found', PixelforgeRejected::class])]
+    #[TestWith([429, 'rate_limit_exceeded', PixelforgeRateLimited::class])]
+    #[TestWith([500, 'internal_error', PixelforgeUnavailable::class])]
+    public function itMapsRetrieveErrorsLikeCreateErrors(int $status, string $code, string $exceptionClass): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            'pixelforge.test/v1/generations/gen_01JC2Z8Q4N6V0M3H7X5T9R2B1K' => Http::response(
+                $this->errorBody('invalid_request_error', $code, 'Pixelforge said no.'),
+                $status,
+            ),
+        ]);
+
+        $this->expectException($exceptionClass);
+
+        $this->client()->retrieveGeneration('gen_01JC2Z8Q4N6V0M3H7X5T9R2B1K');
     }
 
     private function createGenerationFailure(): Throwable

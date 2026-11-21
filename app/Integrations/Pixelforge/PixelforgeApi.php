@@ -28,4 +28,11 @@ interface PixelforgeApi
      * @throws PixelforgeUnavailable the outcome is unknown: Pixelforge may have created it
      */
     public function createGeneration(GenerationRequestData $request, string $generationId): ProviderGenerationData;
+
+    /**
+     * @throws PixelforgeRateLimited
+     * @throws PixelforgeRejected e.g. `not_found`
+     * @throws PixelforgeUnavailable
+     */
+    public function retrieveGeneration(string $pixelforgeId): ProviderGenerationData;
 }

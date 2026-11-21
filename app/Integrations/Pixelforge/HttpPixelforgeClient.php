@@ -59,6 +59,22 @@ final readonly class HttpPixelforgeClient implements PixelforgeApi
             throw PixelforgeUnavailable::connectionFailed($exception);
         }
 
+        return $this->generationFrom($response);
+    }
+
+    public function retrieveGeneration(string $pixelforgeId): ProviderGenerationData
+    {
+        try {
+            $response = $this->request()->get('generations/'.rawurlencode($pixelforgeId));
+        } catch (ConnectionException $exception) {
+            throw PixelforgeUnavailable::connectionFailed($exception);
+        }
+
+        return $this->generationFrom($response);
+    }
+
+    private function generationFrom(Response $response): ProviderGenerationData
+    {
         if (! $response->successful()) {
             throw $this->errorFor($response);
         }
