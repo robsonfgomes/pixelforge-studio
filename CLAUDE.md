@@ -50,7 +50,7 @@ the domains; external systems live in `Integrations/`.
 
 ```
 app/
-├── Domain/<Concept>/          Actions, Data, Enums, Exceptions, Models, QueryBuilders, ValueObjects
+├── Domain/<Concept>/          Actions, Casts, Data, Enums, Exceptions, Models, QueryBuilders, ValueObjects
 ├── Integrations/<Provider>/   contract, HTTP client, signature verification, exceptions
 ├── Http/                      Controllers, Requests, Resources, ViewModels, Middleware
 ├── Jobs/
@@ -85,12 +85,16 @@ app/
   with `Retry-After`) live in the job class, never in CLI flags.
 - **Exceptions**: business rule violations and external API errors are named exceptions. No generic `\Exception`.
 - **Dependencies and config**: classes receive config values and dependencies through the constructor (bound in a
-  service provider). Actions, view models and domain classes never call `config()` or `env()`.
+  service provider). Actions, view models and domain classes never call `config()` or `env()`. The provider
+  connection lives in `config/services.php` (`pixelforge`); our business rules (markup, throttles, retry windows,
+  polling delays) live in `config/generations.php`.
 - **Naming**: Actions are verb + noun (`CreateGeneration`), DTOs end in `Data`, view models end in `ViewModel`,
   integration clients are nouns (`HttpPixelforgeClient`).
 - **Traits (Concerns)**: shared behavior used by two or more classes of the same kind goes in a trait inside a
   `Concerns` folder next to them. Never a global traits folder, never a trait for code used in one place.
 - **Auth**: the starter kit's Fortify setup stays as it is. Auth is not one of our domains.
+- **Starter kit code** (`app/Concerns`, `app/Actions/Fortify`, the settings controllers and requests) stays as it is
+  and is exempt from these folder rules.
 
 ## Money
 
@@ -99,9 +103,12 @@ app/
   and `PricingCalculator`; nothing else multiplies or rounds money.
 - Provider cost = Σ tokens × rate. Actual cost uses the `usage` and the `rates` returned on the generation (fixed at
   creation); estimates use `GET /v1/pricing` (cached).
+- Values from the API become integers at the edge: rates in nanodollars per token (more than 3 decimals throws a
+  named exception, never rounds), ratios such as the text token variance in basis points.
 - User charge = provider cost × 1.25, rounded up to the nanodollar. Failed generations cost nothing.
 - Estimates are always recomputed on the server; never trust an amount sent by the client.
-- The frontend never calculates money. It only formats amounts the server sent.
+- The frontend never calculates or rounds money. Every amount the UI shows is sent by the server as the exact value
+  (9-decimal string) plus a formatted display value. Display rounding: min down, typical half-up, max up.
 
 ## Pixelforge
 

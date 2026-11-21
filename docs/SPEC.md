@@ -86,7 +86,8 @@ app/
 │   │   └── QueryBuilders/  GenerationQueryBuilder
 │   ├── Pricing/
 │   │   ├── Actions/        GetPriceTable (cache + last-known fallback)
-│   │   ├── Data/           PriceTable, TokenCounts, CostEstimate
+│   │   ├── Data/           PriceTableData, TokenCountsData, CostEstimateData
+│   │   ├── Exceptions/     UnsupportedRatePrecision
 │   │   ├── ValueObjects/   Money
 │   │   ├── Casts/          MoneyCast
 │   │   └── PricingCalculator.php
@@ -108,13 +109,18 @@ app/
 tests/Fakes/FakePixelforgeApi.php
 ```
 
+Starter kit code (`app/Concerns`, `app/Actions/Fortify`, the settings controllers and requests) stays as it is and is
+exempt from these folder rules.
+
 ## Decisions
 
 ### Product and UX
 
-- One page, inspired by PromptEdit's own image tool: composer on the left, history on the right, dark theme.
+- One page, inspired by PromptEdit's own image tool: composer on the left, history on the right, dark theme. It
+  replaces the starter kit's Dashboard as the page after login; the Dashboard goes away (M4).
 - Aspect ratio 1:1 / 3:2 / 2:3 maps to `1024x1024` / `1536x1024` / `1024x1536`. Quality low / medium / high.
-  The UI preselects 1:1 and medium; we always send both to Pixelforge.
+  The UI preselects 1:1 and medium; we always send both to Pixelforge. The UI does the aspect ratio mapping: our
+  endpoints receive the Pixelforge size (`1024x1024`), validated by the `ImageSize` enum.
 - Reference images are URLs (max 4, http/https), not uploads: Pixelforge never downloads them.
 - Users can start several generations in a row; each appears at the top of the history as `queued`. No per-user
   in-flight limit (next steps).
@@ -122,32 +128,45 @@ tests/Fakes/FakePixelforgeApi.php
   are free." Updated by a debounced (300 ms) call to the estimate endpoint; validation errors show inline instead.
 - If no price table is available (never fetched and `/v1/pricing` fails), the estimate shows "Estimate unavailable"
   and Generate is disabled; the server rejects the request too.
+- Estimate endpoint: `POST /generations/estimate`, signed-in users only, `estimate` throttle, the same validation as
+  generating (prompt up to 4,000 Unicode characters, size, quality, up to 4 http/https URLs). It returns min,
+  typical and max charges; with no price table it answers 503 "Estimate unavailable".
 - History card: prompt, size, quality, status badge, estimated and actual cost, the image, timestamps. A `queued`
   generation without `submitted_at` shows "Waiting to submit" (or "Retrying…"). Failed cards show a friendly
   reason and "You were not charged". After `image_url_expires_at` the image becomes an "Image expired" placeholder.
-- Amounts show 4 decimals; the exact amount (9 decimals) is in a tooltip.
+- Amounts show 4 decimals; the exact amount (9 decimals) is in a tooltip. Every amount the UI shows (estimates,
+  history costs) is sent by the server as the exact value (9-decimal string) plus a formatted display value; the
+  frontend never rounds. Display rounding: min down, typical half-up, max up.
 - Registration is open (no email verification, 2FA or passkeys). A seeded demo user exists and is an admin.
 
 ### Money
 
-- Amounts are integer nanodollars (`bigint`) wrapped in `Money`. No floats anywhere.
+- Amounts are integer nanodollars (`bigint`) wrapped in `Money`. No floats anywhere. `Money` accepts negative
+  amounts (M6 needs signed amounts); rounding up is always towards +∞.
 - Provider cost = Σ tokens × rate (rates are USD per 1M tokens, so 1 token at $1.00/1M = 1,000 nanodollars).
-- Charge = provider cost × 5/4, rounded up to the nanodollar (at most $0.000000001 in our favor), on estimates and
-  actual costs alike. Failed generations: charge 0.
+- Rates become integer nanodollars per token at the edge (`"12.50"` → 12,500). A rate with more than 3 decimals
+  can't be exact in nanodollars and throws `UnsupportedRatePrecision` instead of rounding.
+- `text_token_variance` arrives as a JSON number (`0.15`); it becomes integer basis points (1,500) at the edge.
+- Charge = provider cost × (100 + markup percent) / 100, rounded up to the nanodollar (at most $0.000000001 in our
+  favor), on estimates and actual costs alike. Markup is 25% (`config/generations.php`). Failed generations:
+  charge 0.
 - Actual cost uses the `usage` and `rates` of the generation itself (fixed at creation), so it matches
   `GET /v1/usage`. Estimates use `GET /v1/pricing`.
 - Estimate tokens:
 
   | Type | Min | Typical | Max |
   |---|---|---|---|
-  | Text (`e = ceil(chars / 4)`, Unicode chars) | `floor(e × 0.85)` | `e` | `ceil(e × 1.15)` |
+  | Text (`e = ceil(chars / 4)`, Unicode chars) | `floor(e × (10⁴ − v) / 10⁴)` | `e` | `ceil(e × (10⁴ + v) / 10⁴)` |
   | Image | 765 × refs | same | same |
   | Output | table[quality][size] | same | same |
-  | Reasoning | range min | midpoint | range max |
+  | Reasoning | range min | midpoint, rounded up | range max |
 
+  `v` is the variance in basis points (1,500); every step is integer arithmetic. The 4 and the 765 come from the
+  price table (`characters_per_text_token`, `per_reference_image`), not from constants.
 - The generation stores the typical and max charge it showed, and the price table it used.
 - Price table cache: TTL `PIXELFORGE_PRICING_CACHE_TTL` (default 3600 s). Invalidated when a create response returns
-  rates different from the cached ones. The last table fetched is kept with no TTL as the fallback.
+  rates different from the cached ones: M1 builds the invalidation, M2 calls it. The last table fetched is kept with
+  no TTL as the fallback.
 
 ### Pixelforge
 
@@ -195,8 +214,19 @@ tests/Fakes/FakePixelforgeApi.php
   scheduler: polling uses delayed jobs.
 - Redis/Valkey holds cache, sessions, locks and rate limiters, with retry and backoff configured on the connection
   (Valkey can restart during maintenance). Queue: Redis locally, Cloud managed queue in production.
-- Throttles (per user, configurable): generate 10/min, estimate 60/min.
+- Throttles (per user): generate 10/min, estimate 60/min (`GENERATION_REQUESTS_PER_MINUTE`,
+  `GENERATION_ESTIMATES_PER_MINUTE`).
 - CI: GitHub Actions runs the test suite on PostgreSQL 17 and the linters on every push.
+
+### Configuration
+
+Classes receive these values through their constructors (bound in a service provider); only the throttles have
+environment variables.
+
+- `config/services.php` → `pixelforge`: the provider connection only. `base_url`, `api_key`, `webhook_secret`,
+  `pricing_cache_ttl` (from `PIXELFORGE_*`), `connect_timeout` 10 s and `timeout` 30 s.
+- `config/generations.php`: our business rules. Markup percent (25), throttles (10 and 60 per minute), the submit
+  retry window (10 minutes), the uncertain-outcome retry window (60 minutes) and the polling delays.
 
 ## Data model
 
@@ -239,12 +269,14 @@ Indexes: `(user_id, created_at)`, `status`, `completed_at`.
 Before M1: CI runs on PostgreSQL (`.github/workflows`), and this SPEC is approved.
 
 **M1 – Money and pricing**
-`Money` + `MoneyCast`, `PriceTable`, `PricingCalculator`, `PixelforgeApi::pricing()` + `HttpPixelforgeClient`,
-`GetPriceTable` (cache, invalidation, fallback), `config/services.php` entry, estimate endpoint with its request and
-throttle.
+`Money` + `MoneyCast`, `PriceTableData`, `TokenCountsData`, `CostEstimateData`, `UnsupportedRatePrecision`,
+`PricingCalculator`, `ImageSize` + `ImageQuality` enums, `PixelforgeApi::pricing()` + `HttpPixelforgeClient`,
+`GetPriceTable` (cache, invalidation, fallback), `config/services.php` entry, `config/generations.php`, estimate
+endpoint with its request, throttle and `CostEstimateResource` (exact + display values).
 Tests: the docs' worked examples as expected values (max $0.373875000; usage day $0.169080000; the succeeded
 lighthouse example $0.305510000), markup rounding, estimate ranges for each quality/size, Unicode prompt length,
-cache hit/miss/fallback, validation.
+rate precision, display rounding (min down, typical half-up, max up), cache hit/miss/fallback, 503 without a price
+table, validation.
 Manual: `POST /generations/estimate` returns min/typical/max for a sample prompt.
 
 **M2 – Create and submit**
@@ -266,8 +298,10 @@ Manual: through the tunnel, `[duplicate]`, `[fail]`, `[slow]` and a dashboard re
 one charge.
 
 **M4 – Page**
-`GenerationPageViewModel` (lazy props), `GenerationResource`, the Vue page (composer, estimate, history, cards,
-empty and error states), `usePoll`, Wayfinder routes, nav and branding.
+Before starting: check `usePoll` and partial reloads in the Inertia v3 docs.
+`GenerationPageViewModel` (lazy props), `GenerationResource` (exact + display values for every amount), the Vue page
+(composer, estimate, history, cards, empty and error states), `usePoll`, Wayfinder routes, nav and branding. The
+page becomes the page after login and the starter kit's Dashboard is removed.
 Tests: page props for a user (only their generations, `hasInProgress`), partial reload returns only the requested
 props.
 Manual: every keyword (`[blocked]`, `[overloaded]`, `[fail]`, `[slow]`, `[duplicate]`, `[succeed]`) shows a clear
