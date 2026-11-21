@@ -306,7 +306,11 @@ exempt from these folder rules.
   (`https://pixelforge-studio-production-nbzjkg.laravel.cloud`), created in Stage 0 and already tested with the
   skeleton: Flex app, Serverless Postgres 17 (backup preset "Dev"), Laravel Valkey Flex 250 MB, managed queue, all in
   US East (Ohio). No scheduler: polling uses delayed jobs (the managed queue allows delays up to 15 minutes; ours are
-  at most 10). We check these resources; we don't create them.
+  at most 10). We check these resources; we don't create them, except the managed queue, which the CLI check found
+  missing and was created in M5: `default`, standard, `mq.flex.256mb`, up to 3 workers, visibility timeout 180 s.
+  The worker count doesn't control Pixelforge's limit of 3 generations in progress: a worker is busy only during the
+  POST, and the generation keeps running at Pixelforge without holding a worker. That limit is still handled by the
+  release with `Retry-After`; the 3 workers are only a cap on jobs running in parallel, enough for our load.
 - Production environment variables:
   - Injected by Valkey: `CACHE_STORE`, `SCHEDULE_CACHE_DRIVER`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_SCHEME`,
     `REDIS_USERNAME`, `REDIS_PASSWORD`, `REDIS_CACHE_DB`, `REDIS_PERSISTENT`. Injected by the managed queue:
@@ -317,9 +321,11 @@ exempt from these folder rules.
     and optionally the throttles. Plain environment variables, not Secrets Manager (they belong to one environment);
     the user types every value; the agent never sees them.
   - The production key's webhook URL is `https://pixelforge-studio-production-nbzjkg.laravel.cloud/webhooks/pixelforge`.
-- The user operates the Laravel Cloud dashboard; the agent has no access to production. Deploys happen by pushing
-  `main` (push-to-deploy), and every push needs the user's explicit approval. The user checks deployments,
-  variables and the managed queue in the dashboard and passes on what the agent needs.
+- Cloud operations go through the `cloud` CLI installed globally on the user's machine and authenticated by the user
+  (not in `composer.json`). Read-only commands run once the user approves the checks; every change (deploy command,
+  managed queue, variables, deploys) is proposed one at a time and runs only after the user approves it. Variable
+  values are never printed: reads use `environment:get --json` (masked) filtered to the names. Deploys happen by
+  pushing `main` (push-to-deploy is on), and every push needs the user's explicit approval.
 - Redis/Valkey holds cache, sessions, locks and rate limiters. Reconnection uses the skeleton's
   `config/database.php` retry and backoff, which is what the Laravel 13 docs recommend for Valkey's maintenance
   restarts: `max_retries` 3, `decorrelated_jitter`, 100–1000 ms; Laravel also retries safe reads once.
@@ -449,9 +455,10 @@ state; four generations at once show one waiting for a slot.
   `release()` with `Retry-After` works (`[overloaded]`) and delayed polling works (`[slow]`).
 - Keyword scenarios on production: one generation each for `[succeed]`, `[fail]`, `[duplicate]`, `[slow]`,
   `[blocked]` and `[overloaded]`, checking the final state, one row per webhook event id and the charge.
-- Cost check: the user runs this read-only query on the production database with a SQL client (credentials from
-  the dashboard), runs `GET /v1/usage` with the production key, and pastes only the results; every UTC day must match
-  exactly (generations, tokens and `cost_usd`). In M7 the admin report makes this comparison.
+- Cost check: this read-only query runs on the production database (through `cloud tinker` after the user approves
+  it, or by the user with a SQL client); the user runs `GET /v1/usage` with the production key and pastes only the
+  result; every UTC day must match exactly (generations, tokens and `cost_usd`). In M7 the admin report makes this
+  comparison.
 
   ```sql
   select
