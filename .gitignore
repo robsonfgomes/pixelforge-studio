@@ -43,3 +43,7 @@ yarn-error.log
 /boost.json
 /opencode.json
 /opencode.jsonc
+
+# Local copies of the assignment and the provider docs
+/docs/TASK.md
+/docs/PIXELFORGE_API.md
