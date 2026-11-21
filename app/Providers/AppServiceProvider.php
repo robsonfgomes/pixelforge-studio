@@ -54,6 +54,10 @@ class AppServiceProvider extends ServiceProvider
 
     protected function configureRateLimiting(): void
     {
+        RateLimiter::for('generation-requests', fn (Request $request): Limit => Limit::perMinute(
+            config('generations.throttles.requests_per_minute'),
+        )->by('user:'.$request->user()?->getAuthIdentifier()));
+
         RateLimiter::for('generation-estimates', fn (Request $request): Limit => Limit::perMinute(
             config('generations.throttles.estimates_per_minute'),
         )->by('user:'.$request->user()?->getAuthIdentifier()));
