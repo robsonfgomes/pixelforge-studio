@@ -13,11 +13,12 @@ once, when the generation succeeds. Failed generations are free.
 ## Flow
 
 1. **Request** (web): validate, recompute the estimate on the server, create the generation (`queued`, estimate,
-   price table used), dispatch `SubmitGenerationJob` after commit, redirect to the page.
+   price table used), dispatch `SubmitGenerationJob` after commit, redirect to the page (`back()` until M4).
 2. **Submit** (`SubmitGenerationJob` → `SubmitGeneration`): `POST /v1/generations` with `Idempotency-Key` and
-   `metadata.generation_id` = our id. On 202, save the Pixelforge id and `submitted_at`, then dispatch
-   `PollGenerationJob` with a 45s delay. On 429/503, release with `Retry-After`. On a definitive error, mark `failed`
-   ($0).
+   `metadata.generation_id` = our id. On 202, save the Pixelforge id, `rates` and `submitted_at` under the row lock
+   (M3 then applies the returned object through `ApplyProviderGeneration` and dispatches `PollGenerationJob` with a
+   45s delay). On 429/503, release with `Retry-After`. On a definitive error, mark `failed` ($0). On an uncertain
+   outcome, keep retrying with the same key.
 3. **Webhook** (`PixelforgeWebhookController`): verify the signature, record the event (unique event id), apply the
    generation object through `ApplyProviderGeneration`, answer 204. Duplicates answer 204 with no effect.
 4. **Apply** (`ApplyProviderGeneration`): lock the row; ignore if already final; move the status forward; on
@@ -78,9 +79,10 @@ Legend: solid = main flow · dashed = fallback / read-only · bold = push from P
 app/
 ├── Domain/
 │   ├── Generations/
-│   │   ├── Actions/        CreateGeneration, SubmitGeneration, ApplyProviderGeneration, RecordWebhookEvent
+│   │   ├── Actions/        CreateGeneration, SubmitGeneration, FailGeneration, ApplyProviderGeneration,
+│   │   │                   RecordWebhookEvent
 │   │   ├── Data/           GenerationRequestData, ProviderGenerationData, GenerationUsageData
-│   │   ├── Enums/          GenerationStatus, ImageSize, ImageQuality
+│   │   ├── Enums/          GenerationStatus, GenerationFailureReason, ImageSize, ImageQuality
 │   │   ├── Exceptions/
 │   │   ├── Models/         Generation, WebhookEvent
 │   │   └── QueryBuilders/  GenerationQueryBuilder
@@ -175,18 +177,32 @@ exempt from these folder rules.
 
 - Generation id: UUIDv7 (`HasUuids`), also used as `Idempotency-Key` and `metadata.generation_id`.
 - HTTP client timeouts: 10 s to connect, 30 s per request.
-- `SubmitGenerationJob`: `ShouldBeUnique` by generation id, `retryUntil()` 10 minutes, released with the
-  `Retry-After` header on 429/503 (exponential backoff capped at 60 s when the header is missing).
-- When the 10 minutes run out after "nothing was created" answers (429/503), the generation is `failed` ($0):
-  "Pixelforge is busy. You were not charged. Please try again."
-- Definitive errors → `failed` ($0) with a friendly message: `content_policy_violation` ("Prompt rejected by the
-  content policy"), `daily_limit_exceeded` ("Daily capacity reached, try again after 00:00 UTC"),
-  `validation_failed` / `idempotency_key_reused` / `invalid_api_key` (generic message, logged as errors: they mean a
-  bug or a misconfiguration).
-- Uncertain outcomes (timeout, connection error, unexpected 5xx): keep retrying with the same `Idempotency-Key`
-  (replays are free and don't count against the limits) for up to 1 hour, then leave the generation `queued`, log an
-  error and stop. Never mark it `failed`: Pixelforge may have created and billed it. The card shows "Taking longer
-  than expected".
+- `SubmitGenerationJob`: `ShouldBeUnique` by generation id (`UniqueFor` 70 minutes, so a dead worker can't keep the
+  lock), `retryUntil()` = creation + the uncertain-outcome window (60 minutes); the 10-minute submit window is checked
+  inside the job. Released with the `Retry-After` header on 429/503; exponential backoff from 2 s capped at 60 s when
+  the header is missing and after an uncertain outcome.
+- Answers are classified as:
+  - "Nothing was created": 429 `rate_limit_exceeded` / `concurrency_limit_exceeded`, 503 `overloaded`. Release.
+  - Definitive: 400 `content_policy_violation`, 429 `daily_limit_exceeded`, 422 `validation_failed`, 409
+    `idempotency_key_reused`, 401 `invalid_api_key`, and any other 4xx. `failed` at $0. Everything except the first
+    two is logged as an error: it means a bug or a misconfiguration.
+  - Uncertain: timeout, connection error, any 5xx other than `overloaded`, a 202 with an invalid body.
+- Every answer other than a 202 increments `submit_attempts`. The first uncertain outcome sets
+  `submission_uncertain_at`; from then on every non-202 answer is treated as uncertain until a 202 arrives (a 429
+  after a timeout doesn't prove nothing was created).
+- When the 10 minutes run out after "nothing was created" answers and no uncertain outcome, the generation is
+  `failed` ($0) with our code `pixelforge_busy`.
+- Uncertain outcomes keep retrying with the same `Idempotency-Key` (replays are free and don't count against the
+  limits) for up to 1 hour, then the generation stays `queued`, an error is logged and the job stops. Never mark it
+  `failed`: Pixelforge may have created and billed it.
+- Failures store `error_code` (Pixelforge's code, or ours such as `pixelforge_busy`) and `error_message`
+  (Pixelforge's original message, or a technical description for our codes), for debugging. No UI copy in the
+  database: the friendly text comes from `GenerationFailureReason::fromCode($code)->message()`, applied by
+  `GenerationResource` (M4). Content policy: "Prompt rejected by the content policy"; daily limit: "Daily capacity
+  reached, try again after 00:00 UTC"; `pixelforge_busy`: "Pixelforge is busy. Please try again."; anything else: a
+  generic message.
+- The card derives its submission state from the columns: `submit_attempts` 0 → "Waiting to submit", more than 0 →
+  "Retrying…", uncertain for longer than the uncertain-outcome window → "Taking longer than expected".
 - No concurrency semaphore on our side: we rely on `concurrency_limit_exceeded` + `Retry-After: 5` (limits are per
   account and shared with the local key).
 - `PollGenerationJob`: delays 45 s, 1, 2, 5, 10, 10, 10, 10 minutes (8 attempts). It stops as soon as the generation
@@ -242,7 +258,7 @@ All amounts are `bigint` nanodollars (cast to `Money`).
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid, PK | UUIDv7; also the Idempotency-Key and `metadata.generation_id` |
-| `user_id` | FK users | |
+| `user_id` | FK users, nullable | `nullOnDelete`: deleting an account keeps its costs for the report |
 | `status` | string | `GenerationStatus` |
 | `prompt` | text | |
 | `size`, `quality` | string | enums |
@@ -252,10 +268,12 @@ All amounts are `bigint` nanodollars (cast to `Money`).
 | `pixelforge_id` | string, nullable, unique | `gen_…` |
 | `rates` | jsonb, nullable | from Pixelforge, fixed at creation |
 | `input_text_tokens`, `input_image_tokens`, `output_tokens`, `reasoning_tokens` | integer, nullable | on success |
-| `provider_cost`, `charge` | bigint, nullable | set once on success; `charge` = 0 on failure |
+| `provider_cost`, `charge` | bigint, nullable | set once on success; both 0 on failure |
 | `image_url` | text, nullable | |
 | `image_url_expires_at` | timestamp, nullable | |
-| `error_code`, `error_message` | string / text, nullable | |
+| `error_code`, `error_message` | string / text, nullable | Pixelforge's code and message, or ours (no UI copy) |
+| `submit_attempts` | integer, default 0 | answers other than a 202 |
+| `submission_uncertain_at` | timestamp, nullable | first uncertain submit outcome |
 | `submitted_at`, `started_at`, `completed_at` | timestamp, nullable | `completed_at` from Pixelforge |
 | `created_at`, `updated_at` | timestamp | |
 
@@ -284,12 +302,13 @@ table, validation.
 Manual: `POST /generations/estimate` returns min/typical/max for a sample prompt.
 
 **M2 – Create and submit**
-Migrations (`generations`, `webhook_events`, `users.is_admin`), `Generation` model + query builder,
-`GenerationStatus`, `CreateGeneration`, `GenerationController@store`, `SubmitGenerationJob` + `SubmitGeneration`,
+Migrations (`generations`, `webhook_events`, `users.is_admin`), `Generation` model + factory,
+`GenerationStatus`, `GenerationFailureReason`, `CreateGeneration`, `GenerationController@store` (throttle, `back()`,
+`estimate` validation error without a price table), `SubmitGenerationJob` + `SubmitGeneration` + `FailGeneration`,
 `PixelforgeApi::createGeneration()`, error mapping, `FakePixelforgeApi`.
-Tests: the estimate is recomputed and stored; the job is dispatched after commit; 202 stores the Pixelforge id;
-429/503 release with `Retry-After`; each definitive error fails at $0; 10-minute cutoff; uncertain outcomes keep
-retrying with the same key; idempotent replay.
+Tests: the estimate is recomputed and stored; the job is dispatched after commit; 202 stores the Pixelforge id, rates
+and `submitted_at`; 429/503 release with `Retry-After`; each definitive error fails at $0; 10-minute cutoff; uncertain
+outcomes keep retrying with the same key, also after a later 429 or definitive error; idempotent replay.
 Manual: create one generation from tinker or a request; it appears in the Pixelforge dashboard with our metadata.
 
 **M3 – Results: webhook and polling**
@@ -303,7 +322,8 @@ one charge.
 
 **M4 – Page**
 Before starting: check `usePoll` and partial reloads in the Inertia v3 docs.
-`GenerationPageViewModel` (lazy props), `GenerationResource` (exact + display values for every amount), the Vue page
+`GenerationQueryBuilder` (`forUser()`, `inProgress()`), `GenerationPageViewModel` (lazy props), `GenerationResource`
+(exact + display values for every amount, friendly failure text from `GenerationFailureReason`), the Vue page
 (composer, estimate, history, cards, empty and error states), `usePoll`, Wayfinder routes, nav and branding. The
 page becomes the page after login and the starter kit's Dashboard is removed.
 Tests: page props for a user (only their generations, `hasInProgress`), partial reload returns only the requested
