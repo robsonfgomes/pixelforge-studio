@@ -68,6 +68,16 @@ final readonly class PricingCalculator
         );
     }
 
+    /**
+     * What one reference image adds to any estimate: its fixed input image tokens, plus the markup.
+     */
+    public function referenceImageCharge(PriceTableData $table): Money
+    {
+        $tokens = new TokenCountsData(0, $table->tokensPerReferenceImage, 0, 0);
+
+        return $this->charge($this->providerCost($tokens, $table->rates));
+    }
+
     private function estimatedTextTokens(string $prompt, PriceTableData $table): int
     {
         return self::divideRoundingUp(mb_strlen($prompt), $table->charactersPerTextToken);

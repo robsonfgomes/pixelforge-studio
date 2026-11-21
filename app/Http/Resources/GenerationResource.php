@@ -8,7 +8,7 @@ use App\Domain\Generations\Enums\GenerationFailureReason;
 use App\Domain\Generations\Enums\GenerationStatus;
 use App\Domain\Generations\Models\Generation;
 use App\Domain\Pricing\Enums\DisplayRounding;
-use App\Http\Resources\Concerns\FormatsMoney;
+use App\Http\Concerns\FormatsMoney;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 

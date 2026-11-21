@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Http\Resources\Concerns;
+namespace App\Http\Concerns;
 
 use App\Domain\Pricing\Enums\DisplayRounding;
 use App\Domain\Pricing\ValueObjects\Money;

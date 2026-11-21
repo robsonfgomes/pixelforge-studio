@@ -173,6 +173,14 @@ class PricingCalculatorTest extends TestCase
         $this->assertSame(251, $estimate->typicalTokens->reasoning);
     }
 
+    #[Test]
+    public function itChargesEachReferenceImageAsItsTokensPlusTheMarkup(): void
+    {
+        $charge = $this->calculator()->referenceImageCharge(FakePixelforgeApi::documentedPriceTable());
+
+        $this->assertSame('0.009562500', $charge->toDecimalString());
+    }
+
     private function calculator(): PricingCalculator
     {
         return new PricingCalculator(markupPercent: 25);

@@ -8,6 +8,7 @@ use App\Domain\Generations\Actions\SubmitGeneration;
 use App\Domain\Pricing\Actions\GetPriceTable;
 use App\Domain\Pricing\PricingCalculator;
 use App\Http\ViewModels\GenerationPageViewModel;
+use App\Http\ViewModels\LandingPageViewModel;
 use App\Integrations\Pixelforge\HttpPixelforgeClient;
 use App\Integrations\Pixelforge\PixelforgeApi;
 use App\Integrations\Pixelforge\WebhookSignature;
@@ -48,6 +49,10 @@ class AppServiceProvider extends ServiceProvider
         $this->app->when(SubmitGeneration::class)
             ->needs('$firstPollDelaySeconds')
             ->give(fn (): int => config('generations.polling_delays_seconds')[0]);
+
+        $this->app->when(LandingPageViewModel::class)
+            ->needs('$markupPercent')
+            ->giveConfig('generations.markup_percent');
 
         $this->app->when(GenerationPageViewModel::class)
             ->needs('$pagePollingWindowMinutes')

@@ -6,7 +6,7 @@ namespace App\Http\Resources;
 
 use App\Domain\Pricing\Data\CostEstimateData;
 use App\Domain\Pricing\Enums\DisplayRounding;
-use App\Http\Resources\Concerns\FormatsMoney;
+use App\Http\Concerns\FormatsMoney;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
