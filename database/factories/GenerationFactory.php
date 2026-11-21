@@ -71,6 +71,34 @@ class GenerationFactory extends Factory
         ]);
     }
 
+    public function processing(): static
+    {
+        return $this->submitted()->state(fn (): array => [
+            'status' => GenerationStatus::Processing,
+            'started_at' => now(),
+        ]);
+    }
+
+    /**
+     * Finished like the documented lighthouse example: $0.305510000 at Pixelforge, $0.381887500 for the user.
+     */
+    public function succeeded(): static
+    {
+        return $this->submitted()->state(fn (): array => [
+            'status' => GenerationStatus::Succeeded,
+            'input_text_tokens' => 12,
+            'input_image_tokens' => 765,
+            'output_tokens' => 6450,
+            'reasoning_tokens' => 3184,
+            'provider_cost' => new Money(305_510_000),
+            'charge' => new Money(381_887_500),
+            'image_url' => 'https://pixelforge.promptedit.dev/images/'.Str::random(10).'.png',
+            'image_url_expires_at' => now()->addDay(),
+            'started_at' => now(),
+            'completed_at' => now(),
+        ]);
+    }
+
     public function uncertainSince(DateTimeInterface $firstUncertainOutcomeAt): static
     {
         return $this->state(fn (): array => [

@@ -14,13 +14,15 @@ class GenerationFailureReasonTest extends TestCase
     #[Test]
     #[TestWith(['content_policy_violation', 'Prompt rejected by the content policy'])]
     #[TestWith(['daily_limit_exceeded', 'Daily capacity reached, try again after 00:00 UTC'])]
-    #[TestWith(['pixelforge_busy', 'Pixelforge is busy. Please try again.'])]
+    #[TestWith(['generation_failed', "We couldn't create an image for this prompt. Try rewording it."])]
+    #[TestWith(['pixelforge_busy', 'The image service is busy right now. Please try again.'])]
     public function itGivesAFriendlyMessageForEachKnownCode(string $code, string $message): void
     {
         $this->assertSame($message, GenerationFailureReason::fromCode($code)->message());
     }
 
     #[Test]
+    #[TestWith(['internal_error'])]
     #[TestWith(['validation_failed'])]
     #[TestWith(['idempotency_key_reused'])]
     #[TestWith(['invalid_api_key'])]
