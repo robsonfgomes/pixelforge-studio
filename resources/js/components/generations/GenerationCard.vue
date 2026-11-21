@@ -35,9 +35,16 @@ const pendingLabel = computed(() => {
     }
 });
 
-const aspectStyle = computed(() => ({
-    aspectRatio: props.generation.aspectRatio.replace(':', ' / '),
-}));
+/** Literal class names, so Tailwind generates them. */
+const aspectClasses: Record<string, string> = {
+    '1:1': 'aspect-square',
+    '3:2': 'aspect-[3/2]',
+    '2:3': 'aspect-[2/3]',
+};
+
+const aspectClass = computed(
+    () => aspectClasses[props.generation.aspectRatio] ?? 'aspect-square',
+);
 
 const createdAt = computed(() =>
     new Date(props.generation.createdAt).toLocaleString(undefined, {
@@ -52,8 +59,21 @@ const createdAt = computed(() =>
         class="flex flex-col overflow-hidden rounded-xl border border-sidebar-border/70 bg-card"
     >
         <div
-            class="relative flex max-h-80 items-center justify-center bg-muted/40"
-            :style="aspectStyle"
+            v-if="generation.status === 'failed'"
+            class="flex items-start gap-3 border-b border-red-500/20 bg-red-500/10 px-4 py-3"
+        >
+            <AlertTriangle class="mt-0.5 size-4 shrink-0 text-red-400" />
+            <div class="flex flex-col gap-0.5">
+                <span class="text-sm">{{ generation.failureMessage }}</span>
+                <span class="text-xs text-muted-foreground">
+                    You were not charged.
+                </span>
+            </div>
+        </div>
+        <div
+            v-else
+            class="relative flex w-full items-center justify-center bg-muted/40"
+            :class="aspectClass"
         >
             <img
                 v-if="
@@ -63,7 +83,7 @@ const createdAt = computed(() =>
                 "
                 :src="generation.imageUrl"
                 :alt="generation.prompt"
-                class="size-full object-cover"
+                class="size-full object-contain"
                 loading="lazy"
                 @error="imageFailedToLoad = true"
             />
@@ -73,16 +93,6 @@ const createdAt = computed(() =>
             >
                 <ImageOff class="size-6" />
                 <span class="text-sm">Image expired</span>
-            </div>
-            <div
-                v-else-if="generation.status === 'failed'"
-                class="flex flex-col items-center gap-2 px-6 text-center"
-            >
-                <AlertTriangle class="size-6 text-red-400" />
-                <span class="text-sm">{{ generation.failureMessage }}</span>
-                <span class="text-xs text-muted-foreground">
-                    You were not charged.
-                </span>
             </div>
             <div
                 v-else
@@ -129,8 +139,14 @@ const createdAt = computed(() =>
                 <div class="flex flex-col gap-0.5">
                     <dt class="text-muted-foreground">Charged</dt>
                     <dd>
+                        <span
+                            v-if="generation.status === 'failed'"
+                            class="text-muted-foreground"
+                        >
+                            Not charged
+                        </span>
                         <AmountText
-                            v-if="generation.charge"
+                            v-else-if="generation.charge"
                             :amount="generation.charge"
                         />
                         <span v-else class="text-muted-foreground">—</span>

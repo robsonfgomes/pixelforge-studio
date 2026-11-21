@@ -247,9 +247,7 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
             </div>
         </div>
 
-        <footer
-            class="flex items-center gap-4 border-t border-sidebar-border/70 p-5"
-        >
+        <footer class="flex shrink-0 items-center gap-4 bg-sidebar p-5">
             <div class="min-w-0 flex-1">
                 <EstimateSummary :state="state" :estimate="estimate" />
                 <InputError :message="errorFor('estimate')" />

@@ -29,7 +29,7 @@ watch(
     <Head title="Generations" />
 
     <div
-        class="flex flex-1 flex-col md:h-[calc(100svh-4rem-1px)] md:flex-row md:overflow-hidden"
+        class="flex flex-1 flex-col md:h-[calc(100svh-4rem-1px)] md:flex-none md:flex-row md:overflow-hidden"
     >
         <GenerationComposer
             :options="composer"
