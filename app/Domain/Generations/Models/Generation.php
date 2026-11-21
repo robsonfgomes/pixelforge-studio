@@ -7,12 +7,14 @@ namespace App\Domain\Generations\Models;
 use App\Domain\Generations\Enums\GenerationStatus;
 use App\Domain\Generations\Enums\ImageQuality;
 use App\Domain\Generations\Enums\ImageSize;
+use App\Domain\Generations\QueryBuilders\GenerationQueryBuilder;
 use App\Domain\Pricing\Casts\MoneyCast;
 use App\Domain\Pricing\ValueObjects\Money;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Database\Factories\GenerationFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Attributes\UseEloquentBuilder;
 use Illuminate\Database\Eloquent\Attributes\UseFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -50,7 +52,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property CarbonImmutable|null $created_at
  * @property CarbonImmutable|null $updated_at
  * @property-read User|null $user
+ *
+ * @method static GenerationQueryBuilder query()
  */
+#[UseEloquentBuilder(GenerationQueryBuilder::class)]
 #[UseFactory(GenerationFactory::class)]
 #[Fillable([
     'user_id',

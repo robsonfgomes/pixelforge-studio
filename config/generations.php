@@ -32,4 +32,9 @@ return [
     // Delay before each status poll, in seconds (45 s, then 1, 2, 5 and four times 10 minutes).
     'polling_delays_seconds' => [45, 60, 120, 300, 600, 600, 600, 600],
 
+    // How long the page keeps polling a generation that is not final yet. It covers the uncertain-outcome window
+    // (60 minutes) plus the backend polling (about 49 minutes); after it, the card says "Taking longer than expected"
+    // and the page stops polling.
+    'page_polling_window_minutes' => 120,
+
 ];
