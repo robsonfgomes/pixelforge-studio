@@ -127,6 +127,25 @@ exempt from these folder rules.
   Settings screens use the starter kit's header layout, not the sidebar one: there is no side menu, and the starter
   kit's Repository, Documentation and search links go away.
 - Dark theme by default when the user hasn't picked one; the starter kit's Appearance setting keeps working.
+- Brand: logo, name, tab title and favicon (`favicon.svg`, `favicon.ico`, `apple-touch-icon.png`, drawn from the
+  logo) are Pixelforge Studio's on every screen, including login, registration, password recovery and Settings. No
+  PromptEdit or Laravel branding.
+- Landing at `/` (`home`), short, for guests and signed-in users, same dark theme and accent color, no stock images
+  (one simple decorative element of our own in CSS/SVG):
+  1. Header: logo and "Pixelforge Studio" on the left; "Log in" and "Create account" for guests, "Open studio" for
+     signed-in users, on the right.
+  2. Hero: a short title, one sentence about the app and the main button ("Start creating" → registration; signed
+     in: "Open studio" → `generations.index`).
+  3. "How it works" in 3 steps: see the cost before generating; generation in the background with live status; pay
+     only for real usage.
+  4. "Transparent pricing": the rule in plain words (the image provider's cost + the markup, the estimate as a
+     range, the real charge recorded once, failures free) and an example table for low / medium / high at 1:1 showing
+     "~typical · at most max", for a 200-character prompt and no reference images, plus what each reference image
+     adds. Every value comes from the server (`PricingCalculator` and the current price table, through
+     `LandingPageViewModel`), never written by hand. The table is a deferred prop (`Inertia::defer`), so a slow price
+     table never delays the landing; when no price table can be obtained (neither cached nor last known) it resolves
+     to "unavailable" and the section shows only the rule, with no table and no endless skeleton.
+  5. Footer: a link to the GitHub repository and the stack in one line.
 - Layout:
   - A top bar: logo and name on the left; the user menu (Settings, Log out) on the right. In M6, the balance chip with
     a "+" (Buy credits) button goes next to the user menu.
@@ -135,9 +154,11 @@ exempt from these folder rules.
   - Composer panel on the left, fixed width, with its own scroll. Sections with small uppercase labels (REFERENCE
     IMAGES, PROMPT, ASPECT RATIO, QUALITY); counters on the references (0/4) and the prompt (0/4000). Aspect ratio
     (with an icon of the shape) and quality side by side, as selects.
-  - A footer pinned to the bottom of the panel: the estimate (or its state) on the left; a large Generate button on
-    the right with the Ctrl/⌘ + Enter hint. The shortcut works and follows the same rules as the button. In M6 the
-    balance goes under the estimate, in a warning color when it isn't enough.
+  - A footer pinned to the bottom of the panel, with no top border and a background one tone above the panel's (it
+    separates the footer from the content scrolling above it): the estimate (or its state) on the left; a large
+    Generate button on the right with the Ctrl/⌘ + Enter hint. On md and up the page has a fixed height, so in a short
+    window the panel scrolls on its own and the footer stays visible. The shortcut works and follows the same rules
+    as the button. In M6 the balance goes under the estimate, in a warning color when it isn't enough.
   - The area on the right: a plain title and the history as cards; a centered empty state with an icon, a title
     and one line of guidance.
   - Out of scope: model picker, video/audio tabs, upscale, number of generations, projects, search and the
@@ -163,7 +184,10 @@ exempt from these folder rules.
   `data.min`, `data.typical` and `data.max`, each `{amount, display}`; with no price table it answers 503
   "Estimate unavailable".
 - History: the user's 50 most recent generations, newest first (pagination or infinite scroll are next steps).
-- History card: prompt, size, quality, status badge, estimated and actual cost, the image, timestamps.
+- History card: prompt, size, quality, status badge, estimated and actual cost, the image, timestamps. The image
+  frame has the generation's aspect ratio (`aspect-square` for 1:1, 3:2 and 2:3 otherwise) and the image shows whole
+  (`object-contain`), so the caption Pixelforge writes on it stays visible. A failed card has no image frame: a
+  compact strip with the icon, the friendly reason and "You were not charged", and "Charged" reads "Not charged".
   `GenerationResource` sends `submissionState`: `waiting` (queued, `submit_attempts` 0), `retrying` (queued,
   attempts > 0) or `taking_longer` (not final, and either uncertain for longer than the uncertain-outcome window or
   older than the page polling window). Failed cards show the friendly reason (`failureMessage`) and "You were not
@@ -380,8 +404,11 @@ Before starting: check `usePoll` and partial reloads in the Inertia v3 docs.
 `submissionState`, friendly failure text from `GenerationFailureReason`), the Vue page (composer, estimate, history,
 cards, empty and error states, Ctrl/⌘ + Enter), `usePoll`, Wayfinder routes, nav and branding, dark default. Fortify
 `home` → `/generations`; the Dashboard route, page and test are removed.
+Landing (`LandingController`, `LandingPageViewModel`, `Landing` page replacing `Welcome`), favicon and brand clean-up.
 Tests: page props for a user (only their 50 latest generations, `hasInProgress` with the polling window), partial
-reload returns only the requested props, the resource's values and states, login and registration land on the page.
+reload returns only the requested props, the resource's values and states, login and registration land on the page;
+the landing renders for guests and signed-in users, its example table uses the `PricingCalculator` values, and without
+a price table the deferred example resolves to "unavailable".
 No frontend test framework: the frontend is covered by `vue-tsc`, the linter and a manual test script.
 Manual: every keyword (`[blocked]`, `[overloaded]`, `[fail]`, `[slow]`, `[duplicate]`, `[succeed]`) shows a clear
 state; four generations at once show one waiting for a slot.
