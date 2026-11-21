@@ -55,6 +55,18 @@ class DemoUserSeederTest extends TestCase
     }
 
     #[Test]
+    public function itKeepsRunningWithoutAPasswordOnceTheDemoUserExists(): void
+    {
+        config(['demo.password' => 'first-demo-password']);
+        $this->seed(DemoUserSeeder::class);
+        config(['demo.password' => null]);
+
+        $this->seed(DemoUserSeeder::class);
+
+        $this->assertSame(1, User::query()->where('email', 'demo@example.com')->count());
+    }
+
+    #[Test]
     public function itRefusesToCreateTheDemoUserWithoutAPassword(): void
     {
         config(['demo.password' => null]);
