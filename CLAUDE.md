@@ -108,7 +108,8 @@ app/
 - User charge = provider cost × 1.25, rounded up to the nanodollar. Failed generations cost nothing.
 - Estimates are always recomputed on the server; never trust an amount sent by the client.
 - The frontend never calculates or rounds money. Every amount the UI shows is sent by the server as the exact value
-  (9-decimal string) plus a formatted display value. Display rounding: min down, typical half-up, max up.
+  (9-decimal string) plus a formatted display value. Display rounding: min down, typical half-up, max up, actual
+  cost half-up.
 
 ## Pixelforge
 

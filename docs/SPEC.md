@@ -85,9 +85,10 @@ app/
 │   │   ├── Models/         Generation, WebhookEvent
 │   │   └── QueryBuilders/  GenerationQueryBuilder
 │   ├── Pricing/
-│   │   ├── Actions/        GetPriceTable (cache + last-known fallback)
-│   │   ├── Data/           PriceTableData, TokenCountsData, CostEstimateData
-│   │   ├── Exceptions/     UnsupportedRatePrecision
+│   │   ├── Actions/        GetPriceTable (cache + last-known fallback), InvalidatePriceTable
+│   │   ├── Data/           PriceTableData, TokenRatesData, TokenCountsData, CostEstimateData
+│   │   ├── Enums/          DisplayRounding
+│   │   ├── Exceptions/     UnsupportedRatePrecision, PriceTableUnavailable
 │   │   ├── ValueObjects/   Money
 │   │   ├── Casts/          MoneyCast
 │   │   └── PricingCalculator.php
@@ -129,14 +130,16 @@ exempt from these folder rules.
 - If no price table is available (never fetched and `/v1/pricing` fails), the estimate shows "Estimate unavailable"
   and Generate is disabled; the server rejects the request too.
 - Estimate endpoint: `POST /generations/estimate`, signed-in users only, `estimate` throttle, the same validation as
-  generating (prompt up to 4,000 Unicode characters, size, quality, up to 4 http/https URLs). It returns min,
-  typical and max charges; with no price table it answers 503 "Estimate unavailable".
+  generating (prompt up to 4,000 Unicode characters, size, quality, up to 4 http/https URLs). It returns
+  `data.min`, `data.typical` and `data.max`, each `{amount, display}`; with no price table it answers 503
+  "Estimate unavailable".
 - History card: prompt, size, quality, status badge, estimated and actual cost, the image, timestamps. A `queued`
   generation without `submitted_at` shows "Waiting to submit" (or "Retrying…"). Failed cards show a friendly
   reason and "You were not charged". After `image_url_expires_at` the image becomes an "Image expired" placeholder.
 - Amounts show 4 decimals; the exact amount (9 decimals) is in a tooltip. Every amount the UI shows (estimates,
   history costs) is sent by the server as the exact value (9-decimal string) plus a formatted display value; the
-  frontend never rounds. Display rounding: min down, typical half-up, max up.
+  frontend never rounds. Display rounding: min down, typical half-up, max up, actual cost half-up (the exact value
+  stays in the tooltip).
 - Registration is open (no email verification, 2FA or passkeys). A seeded demo user exists and is an admin.
 
 ### Money
@@ -269,9 +272,10 @@ Indexes: `(user_id, created_at)`, `status`, `completed_at`.
 Before M1: CI runs on PostgreSQL (`.github/workflows`), and this SPEC is approved.
 
 **M1 – Money and pricing**
-`Money` + `MoneyCast`, `PriceTableData`, `TokenCountsData`, `CostEstimateData`, `UnsupportedRatePrecision`,
-`PricingCalculator`, `ImageSize` + `ImageQuality` enums, `PixelforgeApi::pricing()` + `HttpPixelforgeClient`,
-`GetPriceTable` (cache, invalidation, fallback), `config/services.php` entry, `config/generations.php`, estimate
+`Money` + `MoneyCast` + `DisplayRounding`, `PriceTableData`, `TokenRatesData`, `TokenCountsData`,
+`CostEstimateData`, `UnsupportedRatePrecision`, `PricingCalculator`, `ImageSize` + `ImageQuality` enums,
+`GenerationRequestData`, `PixelforgeApi::pricing()` + `HttpPixelforgeClient`, `GetPriceTable` (cache, fallback) +
+`InvalidatePriceTable` + `PriceTableUnavailable`, `config/services.php` entry, `config/generations.php`, estimate
 endpoint with its request, throttle and `CostEstimateResource` (exact + display values).
 Tests: the docs' worked examples as expected values (max $0.373875000; usage day $0.169080000; the succeeded
 lighthouse example $0.305510000), markup rounding, estimate ranges for each quality/size, Unicode prompt length,
