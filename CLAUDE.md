@@ -134,7 +134,9 @@ app/
 ## Git
 
 - Never commit on your own. Read-only commands (`git status`, `git diff`, `git log`) are fine at any time.
-- Only commit when I ask. Suggest the message first; after my approval, commit and then run `git push`.
+- Only commit when I ask. Suggest the message first; after my approval, commit.
+- Push-to-deploy is on in Laravel Cloud: a push to `main` is a production deploy. Never run `git push` without my
+  explicit approval for that push; approving a commit doesn't approve its push.
 - Commit messages follow Conventional Commits: `<type>: <description>`. Types: `feat`, `fix`, `test`, `refactor`,
   `docs`, `style`, `build`, `chore`. English, imperative mood, lowercase, no trailing period, subject up to ~50
   characters. Add a body only when the why is not obvious. When a milestone has distinct changes, suggest one commit

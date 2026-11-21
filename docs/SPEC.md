@@ -302,10 +302,28 @@ exempt from these folder rules.
 
 - Local: Docker Compose (`app`, `worker` with `queue:listen`, `postgres:17`, `redis:8`); Vite runs on the host;
   webhooks reach the app through an ngrok static domain.
-- Production: Laravel Cloud (Flex compute, Serverless Postgres 17 "Dev", Laravel Valkey Flex, managed queue). No
-  scheduler: polling uses delayed jobs.
-- Redis/Valkey holds cache, sessions, locks and rate limiters, with retry and backoff configured on the connection
-  (Valkey can restart during maintenance). Queue: Redis locally, Cloud managed queue in production.
+- Production: Laravel Cloud, environment `pixelforge-studio-production`
+  (`https://pixelforge-studio-production-nbzjkg.laravel.cloud`), created in Stage 0 and already tested with the
+  skeleton: Flex app, Serverless Postgres 17 (backup preset "Dev"), Laravel Valkey Flex 250 MB, managed queue, all in
+  US East (Ohio). No scheduler: polling uses delayed jobs (the managed queue allows delays up to 15 minutes; ours are
+  at most 10). We check these resources; we don't create them.
+- Production environment variables:
+  - Injected by Valkey: `CACHE_STORE`, `SCHEDULE_CACHE_DRIVER`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_SCHEME`,
+    `REDIS_USERNAME`, `REDIS_PASSWORD`, `REDIS_CACHE_DB`, `REDIS_PERSISTENT`. Injected by the managed queue:
+    `QUEUE_CONNECTION=cloud`. Injected by Postgres: `DB_*`.
+  - Set by us in the dashboard: `SESSION_DRIVER=redis`, `APP_MAINTENANCE_DRIVER=cache`,
+    `APP_MAINTENANCE_STORE=redis`, `PIXELFORGE_BASE_URL`, `PIXELFORGE_API_KEY` and `PIXELFORGE_WEBHOOK_SECRET` (the
+    production key), `PIXELFORGE_PRICING_CACHE_TTL`, `APP_NAME`, `APP_DEBUG=false`, `APP_URL`, `DEMO_USER_PASSWORD`,
+    and optionally the throttles. Plain environment variables, not Secrets Manager (they belong to one environment);
+    the user types every value; the agent never sees them.
+  - The production key's webhook URL is `https://pixelforge-studio-production-nbzjkg.laravel.cloud/webhooks/pixelforge`.
+- Cloud operations go through the `cloud` CLI installed globally on the user's machine (not in `composer.json`); the
+  agent proposes each command and the user approves it before it runs.
+- Redis/Valkey holds cache, sessions, locks and rate limiters. Reconnection uses the skeleton's
+  `config/database.php` retry and backoff, which is what the Laravel 13 docs recommend for Valkey's maintenance
+  restarts: `max_retries` 3, `decorrelated_jitter`, 100–1000 ms; Laravel also retries safe reads once.
+  `REDIS_COMMAND_RETRIES` stays 0, so writes such as the throttle's `INCR` are never counted twice. Queue: Redis
+  locally, Cloud managed queue in production.
 - Throttles (per user): generate 10/min, estimate 60/min (`GENERATION_REQUESTS_PER_MINUTE`,
   `GENERATION_ESTIMATES_PER_MINUTE`).
 - CI: GitHub Actions runs the test suite on PostgreSQL 17 and the linters on every push.
@@ -414,8 +432,25 @@ Manual: every keyword (`[blocked]`, `[overloaded]`, `[fail]`, `[slow]`, `[duplic
 state; four generations at once show one waiting for a slot.
 
 **M5 – Ship**
-Redis retry/backoff config, demo user seeder, deploy to Laravel Cloud, keyword scenarios on production, compare the
-recorded provider costs with `GET /v1/usage`, README, leave a few generations.
+- Redis retry/backoff: verify and document (the skeleton already has it; see Infrastructure).
+- `DemoUserSeeder`: no factories (Faker isn't installed in production), idempotent: it creates the user by
+  `config('demo.email')` (`demo@example.com`) only when missing, with the password from `config('demo.password')`
+  (`DEMO_USER_PASSWORD`, read in `config/demo.php` so it works with a cached config), and makes sure it is an admin;
+  running it again changes nothing, and it refuses to create the user without a password. Everything about the demo
+  user lives in `config/demo.php` (in M6, its initial credit too); `config/app.php` stays the framework's. Run once
+  with `cloud command:run` (never in the deploy commands). The credentials go only in the submission form, not in
+  the README. In M6, the demo user's initial credit must be idempotent too.
+- Deploy to Laravel Cloud after approval. Build: `composer install --no-dev --optimize-autoloader && npm ci && npm run
+  build && php artisan optimize`. Deploy command: `php artisan migrate --force` only.
+- First-deploy checks, because the Cloud docs don't cover them: the managed queue runs our jobs (`cloud` connection),
+  `release()` with `Retry-After` works (`[overloaded]`) and delayed polling works (`[slow]`).
+- Keyword scenarios on production: one generation each for `[succeed]`, `[fail]`, `[duplicate]`, `[slow]`,
+  `[blocked]` and `[overloaded]`, checking the final state, one row per webhook event id and the charge.
+- Cost check: the agent sums `provider_cost` per UTC completion day (`cloud tinker`); the user runs `GET /v1/usage`
+  with the production key and pastes only the result; every day must match exactly.
+- README: the sections in `CLAUDE.md`, with commands the agent ran from a clean state (`docker compose down -v`, only
+  at the end of M5, after the production check); the user runs the ngrok tunnel and confirms.
+- Leave a few generations on production.
 Manual: the production numbers match the Pixelforge dashboard for the production key.
 
 **M6 – Stretch: balances**
