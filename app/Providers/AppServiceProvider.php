@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Domain\Generations\Actions\SubmitGeneration;
 use App\Domain\Pricing\Actions\GetPriceTable;
 use App\Domain\Pricing\PricingCalculator;
 use App\Integrations\Pixelforge\HttpPixelforgeClient;
 use App\Integrations\Pixelforge\PixelforgeApi;
+use App\Integrations\Pixelforge\WebhookSignature;
 use Carbon\CarbonImmutable;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Foundation\Application;
@@ -41,6 +43,14 @@ class AppServiceProvider extends ServiceProvider
         $this->app->when(GetPriceTable::class)
             ->needs('$cacheTtlSeconds')
             ->giveConfig('services.pixelforge.pricing_cache_ttl');
+
+        $this->app->when(SubmitGeneration::class)
+            ->needs('$firstPollDelaySeconds')
+            ->give(fn (): int => config('generations.polling_delays_seconds')[0]);
+
+        $this->app->bind(WebhookSignature::class, fn (): WebhookSignature => new WebhookSignature(
+            config('services.pixelforge.webhook_secret'),
+        ));
     }
 
     /**
