@@ -15,16 +15,17 @@ once, when the generation succeeds. Failed generations are free.
 1. **Request** (web): validate, recompute the estimate on the server, create the generation (`queued`, estimate,
    price table used), dispatch `SubmitGenerationJob` after commit, redirect to the page (`back()` until M4).
 2. **Submit** (`SubmitGenerationJob` → `SubmitGeneration`): `POST /v1/generations` with `Idempotency-Key` and
-   `metadata.generation_id` = our id. On 202, save the Pixelforge id, `rates` and `submitted_at` under the row lock
-   (M3 then applies the returned object through `ApplyProviderGeneration` and dispatches `PollGenerationJob` with a
-   45s delay). On 429/503, release with `Retry-After`. On a definitive error, mark `failed` ($0). On an uncertain
-   outcome, keep retrying with the same key.
+   `metadata.generation_id` = our id. On 202, save the Pixelforge id, `rates` and `submitted_at` under the row lock,
+   apply the returned object through `ApplyProviderGeneration` (a replay may already be final) and, when this run set
+   `submitted_at` and the generation is not final, dispatch poll attempt 1 with a 45s delay. On 429/503, release with
+   `Retry-After`. On a definitive error, mark `failed` ($0). On an uncertain outcome, keep retrying with the same
+   key.
 3. **Webhook** (`PixelforgeWebhookController`): verify the signature, record the event (unique event id), apply the
    generation object through `ApplyProviderGeneration`, answer 204. Duplicates answer 204 with no effect.
 4. **Apply** (`ApplyProviderGeneration`): lock the row; ignore if already final; move the status forward; on
    `succeeded`, record usage, rates, provider cost and charge exactly once; on `failed`, record the error, charge $0.
 5. **Poll** (`PollGenerationJob`): stop if already final; otherwise `GET /v1/generations/{id}` and apply it through the
-   same Action; reschedule with growing delays until final or out of attempts.
+   same Action; dispatch the next attempt with a growing delay until final or out of attempts.
 6. **Display**: the page polls its own props (`generations`, `hasInProgress`) every 2.5s only while something is in
    progress.
 
@@ -81,7 +82,7 @@ app/
 │   ├── Generations/
 │   │   ├── Actions/        CreateGeneration, SubmitGeneration, FailGeneration, ApplyProviderGeneration,
 │   │   │                   RecordWebhookEvent
-│   │   ├── Data/           GenerationRequestData, ProviderGenerationData, GenerationUsageData
+│   │   ├── Data/           GenerationRequestData, ProviderGenerationData, WebhookEventData
 │   │   ├── Enums/          GenerationStatus, GenerationFailureReason, ImageSize, ImageQuality
 │   │   ├── Exceptions/
 │   │   ├── Models/         Generation, WebhookEvent
@@ -198,19 +199,34 @@ exempt from these folder rules.
 - Failures store `error_code` (Pixelforge's code, or ours such as `pixelforge_busy`) and `error_message`
   (Pixelforge's original message, or a technical description for our codes), for debugging. No UI copy in the
   database: the friendly text comes from `GenerationFailureReason::fromCode($code)->message()`, applied by
-  `GenerationResource` (M4). Content policy: "Prompt rejected by the content policy"; daily limit: "Daily capacity
-  reached, try again after 00:00 UTC"; `pixelforge_busy`: "Pixelforge is busy. Please try again."; anything else: a
-  generic message.
+  `GenerationResource` (M4). The copy never names the provider:
+  - `content_policy_violation`: "Prompt rejected by the content policy"
+  - `daily_limit_exceeded`: "Daily capacity reached, try again after 00:00 UTC"
+  - `generation_failed`: "We couldn't create an image for this prompt. Try rewording it."
+  - `pixelforge_busy`: "The image service is busy right now. Please try again."
+  - `internal_error` and anything else: "Something went wrong while generating. Please try again."
 - The card derives its submission state from the columns: `submit_attempts` 0 → "Waiting to submit", more than 0 →
   "Retrying…", uncertain for longer than the uncertain-outcome window → "Taking longer than expected".
 - No concurrency semaphore on our side: we rely on `concurrency_limit_exceeded` + `Retry-After: 5` (limits are per
   account and shared with the local key).
-- `PollGenerationJob`: delays 45 s, 1, 2, 5, 10, 10, 10, 10 minutes (8 attempts). It stops as soon as the generation
-  is final, releases on 429 and, when out of attempts, logs a warning and keeps the last status.
-- Webhook route `POST /webhooks/pixelforge`: no auth, no CSRF, no throttle. Signature: HMAC-SHA256 of
-  `"<t>.<raw body>"`, `hash_equals`, `|now - t| <= 300` s, otherwise 400. Event id unique in `webhook_events`
-  (duplicate → 204, no effect). `ping` → 204. Unknown generation → 204 and a log line. The event insert and the
-  state change happen in one transaction, inline (fast enough for the 10 s limit).
+- Never call Pixelforge inside a database transaction or while holding a row lock: call the API first, then lock,
+  re-read and apply.
+- `PollGenerationJob`: delays 45 s, 1, 2, 5, 10, 10, 10, 10 minutes (8 attempts). Each job carries its attempt number
+  and, when the generation is still not final, dispatches the next attempt with the next delay. It implements
+  `ShouldBeUniqueUntilProcessing` keyed by generation id, so there is never more than one polling chain per
+  generation and a running job can dispatch its successor. It stops as soon as the generation is final. A 429
+  releases the job for `Retry-After` without spending an attempt (each job has `retryUntil()` 10 minutes for that).
+  An uncertain answer (timeout, 5xx) spends an attempt. A 404 `not_found` logs an error and stops without changing
+  the status. Out of attempts: log a warning and keep the last status.
+- `ApplyProviderGeneration` fills `pixelforge_id` and `rates` when they are empty, but never `submitted_at`: only our
+  own create response sets it, so the submit job still finishes its cycle and starts polling when a webhook beats it.
+- Webhook route `POST /webhooks/pixelforge` lives in `routes/webhooks.php`, loaded by `bootstrap/app.php` with no
+  middleware: no auth, no CSRF, no session, no throttle. Signature: HMAC-SHA256 of `"<t>.<raw body>"`, `hash_equals`,
+  `|now - t| <= 300` s, otherwise 400. A body that is not a valid event (even with a valid signature) → 400 and an
+  error log. No webhook secret configured → 500 and an error log (our misconfiguration, not a bad request). Event id
+  unique in `webhook_events` (duplicate → 204, no effect). `ping` → 204. Unknown generation → the event is still
+  recorded (so a resend stays a duplicate), 204 and a log line. The event insert and the state change happen in one
+  transaction, inline (fast enough for the 10 s limit).
 - Matching: by `metadata.generation_id` (works even when the webhook beats the create response), then by
   Pixelforge id.
 - Status moves only forward: `queued → processing → succeeded | failed`, and `queued → succeeded | failed` is
@@ -312,8 +328,10 @@ outcomes keep retrying with the same key, also after a later 429 or definitive e
 Manual: create one generation from tinker or a request; it appears in the Pixelforge dashboard with our metadata.
 
 **M3 – Results: webhook and polling**
-`WebhookSignature`, `PixelforgeWebhookController`, `RecordWebhookEvent`, `ApplyProviderGeneration`,
-`PollGenerationJob`, `PixelforgeApi::retrieveGeneration()`.
+`WebhookSignature`, `PixelforgeWebhookController` + `routes/webhooks.php`, `WebhookEvent` model, `WebhookEventData`,
+`RecordWebhookEvent`, `ApplyProviderGeneration`, `PollGenerationJob`, `PixelforgeApi::retrieveGeneration()`, the
+extended `ProviderGenerationData` (usage as `TokenCountsData`, image, error, timestamps), `SubmitGeneration` applying
+its 202 and starting the polling, the new failure messages.
 Tests: valid / invalid / expired signature; duplicate event; `processing` after `succeeded`; webhook before the
 create response; webhook and poll racing charge once; failed is free; polling stops when final and gives up without
 failing.
