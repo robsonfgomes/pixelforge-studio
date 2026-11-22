@@ -43,46 +43,7 @@ once, when the generation succeeds. Failed generations are free.
 
 Domain-oriented (*Laravel Beyond CRUD*) inside `app/`. See `CLAUDE.md` for the rules of each layer.
 
-```mermaid
-flowchart LR
-    U((User)) -- "prompt" --> FE
-
-    subgraph Browser
-        FE[Vue / Inertia]
-    end
-
-    subgraph Backend["Backend: Laravel app on Laravel Cloud"]
-        WEB[Web controllers<br/>ViewModels]
-        Q[[Queue]]
-        W[Jobs<br/>SubmitGenerationJob<br/>PollGenerationJob]
-        WH[Webhook controller<br/>verify signature, dedupe by event id]
-        A{{ApplyProviderGeneration<br/>lock row, never regress,<br/>charge once}}
-        DB[(Postgres)]
-    end
-
-    subgraph External["External provider"]
-        PF[Pixelforge API]
-    end
-
-    FE -. "estimate (debounced)" .-> WEB
-    FE -- "submit: prompt, size, quality, refs" --> WEB
-    FE -. "usePoll while in progress" .-> WEB
-    FE -. "load image_url (direct)" .-> PF
-
-    WEB -. "GET /v1/pricing (cached)" .-> PF
-    WEB -- "create generation (queued + estimate)" --> DB
-    WEB -- "dispatch after commit" --> Q
-    Q --> W
-    W -- "POST /v1/generations<br/>Idempotency-Key + metadata<br/>429/503: release(max(Retry-After, backoff))" --> PF
-    W -. "fallback: GET /v1/generations/{id}" .-> PF
-
-    PF == "webhook (signed, push)" ==> WH
-    WH --> A
-    W -- "poll result" --> A
-    A -- "status + cost" --> DB
-```
-
-Legend: solid = main flow · dashed = fallback / read-only · bold = push from Pixelforge.
+The architecture diagram lives in the [README](../README.md#how-it-works), so there is a single copy.
 
 ### Folder structure
 

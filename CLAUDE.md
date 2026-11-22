@@ -172,10 +172,12 @@ app/
 
 ## README
 
-Write it only when I ask, directly and in at most ~120 lines, with exactly these sections:
+Write it only when I ask, directly and in at most ~120 lines of text (the architecture diagram doesn't count), with
+exactly these sections:
 
 1. **Overview**: what it does in 2–3 lines, the stack and the deployed URL.
-2. **How it works**: the architecture diagram (Mermaid) and the generation flow in a few steps.
+2. **How it works**: the architecture diagram (Mermaid, with its legend right below) and the generation flow in a few
+   steps. The diagram lives only in the README; `docs/SPEC.md` links to it.
 3. **Billing rules**: estimate vs actual cost, markup, rounding, failed generations.
 4. **How to run**: only commands you have run yourself from a clean state (`docker compose down -v`, then every
    step), including the tunnel for webhooks.

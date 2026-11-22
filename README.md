@@ -15,16 +15,44 @@ Decisions, data model and milestones: [docs/SPEC.md](docs/SPEC.md).
 
 ```mermaid
 flowchart LR
-    FE[Vue / Inertia] -- "estimate, submit, poll page" --> WEB[Controllers + ViewModels]
-    WEB -- "queued generation + estimate" --> DB[(Postgres)]
-    WEB -- "dispatch after commit" --> W[SubmitGenerationJob / PollGenerationJob]
-    W -- "POST /v1/generations (Idempotency-Key)" --> PF[Pixelforge API]
+    U((User)) -- "prompt" --> FE
+
+    subgraph Browser
+        FE[Vue / Inertia]
+    end
+
+    subgraph Backend["Backend: Laravel app on Laravel Cloud"]
+        WEB[Web controllers<br/>ViewModels]
+        Q[[Queue]]
+        W[Jobs<br/>SubmitGenerationJob<br/>PollGenerationJob]
+        WH[Webhook controller<br/>verify signature, dedupe by event id]
+        A{{ApplyProviderGeneration<br/>lock row, never regress,<br/>charge once}}
+        DB[(Postgres)]
+    end
+
+    subgraph External["External provider"]
+        PF[Pixelforge API]
+    end
+
+    FE -. "estimate (debounced)" .-> WEB
+    FE -- "submit: prompt, size, quality, refs" --> WEB
+    FE -. "usePoll while in progress" .-> WEB
+    FE -. "load image_url (direct)" .-> PF
+
+    WEB -. "GET /v1/pricing (cached)" .-> PF
+    WEB -- "create generation (queued + estimate)" --> DB
+    WEB -- "dispatch after commit" --> Q
+    Q --> W
+    W -- "POST /v1/generations<br/>Idempotency-Key + metadata<br/>429/503: release(max(Retry-After, backoff))" --> PF
     W -. "fallback: GET /v1/generations/{id}" .-> PF
-    PF == "signed webhook" ==> WH[Webhook controller]
-    WH --> A{{ApplyProviderGeneration}}
-    W --> A
-    A -- "status + charge, once" --> DB
+
+    PF == "webhook (signed, push)" ==> WH
+    WH --> A
+    W -- "poll result" --> A
+    A -- "status + cost" --> DB
 ```
+
+Legend: solid = main flow · dashed = fallback / read-only · bold = push from Pixelforge.
 
 1. The server validates the request, recomputes the estimate, stores a `queued` generation and queues the submit.
 2. The job calls Pixelforge with our generation id as `Idempotency-Key`, so retries never create a second image.
