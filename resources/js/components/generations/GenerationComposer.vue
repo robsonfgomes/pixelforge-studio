@@ -2,7 +2,7 @@
 import { useForm } from '@inertiajs/vue3';
 import { useEventListener } from '@vueuse/core';
 import { Plus, Sparkles, X } from '@lucide/vue';
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import InputError from '@/components/InputError.vue';
 import AspectRatioIcon from '@/components/generations/AspectRatioIcon.vue';
 import EstimateSummary from '@/components/generations/EstimateSummary.vue';
@@ -54,6 +54,9 @@ const canAddReference = computed(
         props.options.limits.referenceImages,
 );
 
+/** Our own throttle (429) on submitting, shown in the footer instead of an error page. */
+const submitError = ref<string | undefined>(undefined);
+
 const canGenerate = computed(
     () => !composerForm.processing && state.value === 'ready',
 );
@@ -95,9 +98,22 @@ function generate(): void {
         return;
     }
 
+    submitError.value = undefined;
+
     composerForm.transform(currentInput).submit(store(), {
         preserveScroll: true,
         onSuccess: () => composerForm.reset(),
+        onHttpException: (response) => {
+            if (response.status !== 429) {
+                return;
+            }
+
+            submitError.value =
+                'You are generating too fast. Please wait a moment and try again.';
+
+            // Returning false keeps Inertia from replacing the page with its error screen.
+            return false;
+        },
     });
 }
 
@@ -252,6 +268,7 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
             <div class="min-w-0 flex-1">
                 <EstimateSummary :state="state" :estimate="estimate" />
                 <InputError :message="errorFor('estimate')" />
+                <InputError :message="submitError" />
             </div>
             <Button
                 type="submit"
