@@ -166,11 +166,11 @@ exempt from these folder rules.
     grid/list toggle (the last two are next steps).
 - Submitting past our own throttle (429) shows "You are generating too fast. Please wait a moment and try again."
   in the composer footer instead of an error page.
-- Generate is disabled while submitting, while the prompt is empty (no estimate request either: "Enter a prompt to
-  see the cost"), while the estimate is invalid or unavailable, and until the estimate for the current input has
-  arrived (debounce and request in flight), so the user always saw the price of what they send. Once the server
-  accepts the submission, the form resets to its defaults (empty prompt, no references, 1:1, medium); a rejected
-  submission keeps the values and shows the errors. Enabled buttons show the pointer cursor.
+- Generate is disabled while submitting, while the prompt is empty (no estimate request either: "Enter a prompt to see
+  the cost"), while the estimate is invalid or unavailable, and until the estimate for the current input has arrived
+  (debounce and request in flight), so the user always saw the price of what they send. Once the server accepts the
+  submission, the prompt is cleared; aspect ratio, quality and references stay. A rejected submission keeps the values
+  and shows the errors. Enabled buttons show the pointer cursor.
 - Aspect ratio 1:1 / 3:2 / 2:3 maps to `1024x1024` / `1536x1024` / `1024x1536`. Quality low / medium / high.
   The UI preselects 1:1 and medium; we always send both to Pixelforge. The UI does the aspect ratio mapping: our
   endpoints receive the Pixelforge size (`1024x1024`), validated by the `ImageSize` enum.
