@@ -57,7 +57,7 @@ watch(
 
             <div
                 v-else
-                class="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-4"
+                class="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] items-start gap-4"
             >
                 <GenerationCard
                     v-for="generation in generations"
