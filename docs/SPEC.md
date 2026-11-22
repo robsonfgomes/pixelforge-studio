@@ -27,9 +27,9 @@ once, when the generation succeeds. Failed generations are free.
 2. **Submit** (`SubmitGenerationJob` → `SubmitGeneration`): `POST /v1/generations` with `Idempotency-Key` and
    `metadata.generation_id` = our id. On 202, save the Pixelforge id, `rates` and `submitted_at` under the row lock,
    apply the returned object through `ApplyProviderGeneration` (a replay may already be final) and, when this run set
-   `submitted_at` and the generation is not final, dispatch poll attempt 1 with a 45s delay. On 429/503, release with
-   `Retry-After`. On a definitive error, mark `failed` ($0). On an uncertain outcome, keep retrying with the same
-   key.
+   `submitted_at` and the generation is not final, dispatch poll attempt 1 with a 45s delay. On 429/503, release for
+   the longer of `Retry-After` and a growing backoff. On a definitive error, mark `failed` ($0). On an uncertain
+   outcome, keep retrying with the same key.
 3. **Webhook** (`PixelforgeWebhookController`): verify the signature, record the event (unique event id), apply the
    generation object through `ApplyProviderGeneration`, answer 204. Duplicates answer 204 with no effect.
 4. **Apply** (`ApplyProviderGeneration`): lock the row; ignore if already final; move the status forward; on
@@ -73,7 +73,7 @@ flowchart LR
     WEB -- "create generation (queued + estimate)" --> DB
     WEB -- "dispatch after commit" --> Q
     Q --> W
-    W -- "POST /v1/generations<br/>Idempotency-Key + metadata<br/>429/503: release(Retry-After)" --> PF
+    W -- "POST /v1/generations<br/>Idempotency-Key + metadata<br/>429/503: release(max(Retry-After, backoff))" --> PF
     W -. "fallback: GET /v1/generations/{id}" .-> PF
 
     PF == "webhook (signed, push)" ==> WH
@@ -172,8 +172,9 @@ exempt from these folder rules.
     Generate button on the right with the Ctrl/⌘ + Enter hint. On md and up the page has a fixed height, so in a short
     window the panel scrolls on its own and the footer stays visible. The shortcut works and follows the same rules
     as the button. In M6 (out of scope) the balance goes under the estimate, in a warning color when it isn't enough.
-  - The area on the right: a plain title and the history as cards; a centered empty state with an icon, a title
-    and one line of guidance.
+  - The area on the right: a plain title and the history as cards; an empty state with an icon, a title and
+    one line of guidance, centered horizontally just below the title (not pushed to the middle or the end of the
+    page).
   - Out of scope: model picker, video/audio tabs, upscale, number of generations, projects, search and the
     grid/list toggle (the last two are next steps).
 - Submitting past our own throttle (429) shows "You are generating too fast. Please wait a moment and try again."
