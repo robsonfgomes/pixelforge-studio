@@ -35,7 +35,8 @@ flowchart LR
 ## Billing rules
 
 - Amounts are integer nanodollars wrapped in a `Money` value object; no floats anywhere.
-- Estimate: computed on the server from the cached `GET /v1/pricing` table, as min, typical and max. The client never
+- Estimate: computed on the server from the cached `GET /v1/pricing` table, as min, typical and max. It is a range
+  because text tokens vary up to 15% and reasoning is only known at the end; the max is a guarantee. The client never
   sends or computes an amount.
 - Actual cost: Σ tokens × rate, from the `usage` and the `rates` Pixelforge returns on the generation.
 - Charge: provider cost × 1.25, rounded up to the nanodollar, per generation.
@@ -48,7 +49,8 @@ Requires Docker, Node 22 and an [ngrok](https://ngrok.com) static domain for web
 
 ```bash
 git clone https://github.com/robsonfgomes/pixelforge-studio.git && cd pixelforge-studio
-cp .env.example .env    # set PIXELFORGE_API_KEY and PIXELFORGE_WEBHOOK_SECRET
+# Create a Pixelforge account and an API key for local development first.
+cp .env.example .env    # copy the key to PIXELFORGE_API_KEY and its webhook signing secret to PIXELFORGE_WEBHOOK_SECRET
 docker compose up -d --build
 docker compose exec app composer install
 docker compose exec app php artisan key:generate
@@ -93,7 +95,10 @@ Retry backoff, measured with `[overloaded]` (Pixelforge always busy) over the 10
 - Backoff grows per attempt, capped at 60 s (20 s for the concurrency limit): Pixelforge's docs ask for it.
 - Domain-oriented `app/` (Laravel Beyond CRUD): money and provider rules stay out of controllers and jobs.
 - Polling props only while something is in progress: no WebSockets needed for a few concurrent generations.
-- Laravel Cloud managed queue: workers scale with queued work and restart on deploy.
+- Laravel Cloud managed queue, capped at 3 workers: they scale with queued work; Pixelforge's concurrency limit is
+  still handled by the backoff, not by the worker count.
+- One Pixelforge key per environment: the production key's `/v1/usage` covers only the deployed app, so it can match
+  our records exactly.
 
 ## Where I corrected the agent
 
@@ -101,17 +106,15 @@ All entries: [docs/AGENT_CORRECTIONS.md](docs/AGENT_CORRECTIONS.md). The most re
 
 - Retries obeyed only `Retry-After` (201 attempts in 10 minutes) → a backoff that grows per attempt, as the docs ask.
 - The polling chain had no uniqueness guard → one chain per generation, started only by the run that recorded the 202.
-- External calls could run inside a transaction or a row lock → call Pixelforge first, then lock, re-read and apply.
+- A rule set before M3, not a bug fix: never call Pixelforge inside a transaction or row lock; call, then lock, apply.
 - A crash between recording the 202 and dispatching the poll left no fallback for lost webhooks → retries restart it.
-- Reference images stayed after a submission → cleared, since each one adds cost the next generation would inherit.
+- The plan stored the friendly UI text in the database → keep the provider's code and message; a backend enum maps it.
 
 ## Left out and next steps
 
 - Balances (stretch): a credit ledger that reserves the max estimate on creation and settles to the actual cost.
 - Admin report (stretch): per UTC day and per user, charges and provider cost compared with `GET /v1/usage`.
-- Known risk: a generation Pixelforge billed but that never reaches a final state here; a sweep by
-  `metadata.generation_id` would reconcile it.
+- Known risk: a billed generation that never reaches a final state here; reconcile by `metadata.generation_id`.
 - "Check status" action on a generation whose polling gave up.
 - Copy images to object storage: Pixelforge URLs expire after 24 hours.
-- Pagination and search in the history; a per-user limit on generations in progress.
-- WebSockets (Reverb) instead of polling; alerts on failed jobs (Sentry or Nightwatch).
+- History pagination and search; a per-user in-progress limit; WebSockets (Reverb); alerts on failed jobs.
