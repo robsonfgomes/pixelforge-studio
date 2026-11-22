@@ -10,6 +10,16 @@ learns the result from signed webhooks (with polling as a fallback) and shows li
 composer. Users pay Pixelforge's cost plus 25%. The estimate shown up front is a range; the actual charge is recorded
 once, when the generation succeeds. Failed generations are free.
 
+## Scope
+
+- In scope: every required feature of the task (M1–M5), working, tested and deployed.
+- Out of scope (decided on 2026-11-22, for lack of time): both stretch goals, M6 (balances) and M7 (admin report).
+  Their design below stays as the planned reference, and the README lists each one under "Left out and next steps":
+  - Balances: a credit ledger (`credit_transactions`) that reserves the max estimated charge when a generation is
+    created, settles to the actual charge on success and releases the reservation on failure.
+  - Admin report: per UTC completion day and per user, charges, provider cost and profit, compared with
+    `GET /v1/usage` for the same days, flagging any difference.
+
 ## Flow
 
 1. **Request** (web): validate, recompute the estimate on the server, create the generation (`queued`, estimate,
@@ -114,6 +124,8 @@ app/
 tests/Fakes/FakePixelforgeApi.php
 ```
 
+Entries marked (M6) or (M7) belong to the out-of-scope stretch goals and don't exist.
+
 Starter kit code (`app/Concerns`, `app/Actions/Fortify`, the settings controllers and requests) stays as it is and is
 exempt from these folder rules.
 
@@ -148,8 +160,8 @@ exempt from these folder rules.
      to "unavailable" and the section shows only the rule, with no table and no endless skeleton.
   5. Footer: a link to the GitHub repository and the stack in one line.
 - Layout:
-  - A top bar: logo and name on the left; the user menu (Settings, Log out) on the right. In M6, the balance chip with
-    a "+" (Buy credits) button goes next to the user menu.
+  - A top bar: logo and name on the left; the user menu (Settings, Log out) on the right. In M6 (out of scope), the
+    balance chip with a "+" (Buy credits) button goes next to the user menu.
   - Below it, two columns at the full height of the screen: the composer on the left and the history on the right,
     taking the rest. On narrow (mobile) screens they stack: composer on top, history below.
   - Composer panel on the left, fixed width, with its own scroll. Sections with small uppercase labels (REFERENCE
@@ -159,7 +171,7 @@ exempt from these folder rules.
     separates the footer from the content scrolling above it): the estimate (or its state) on the left; a large
     Generate button on the right with the Ctrl/⌘ + Enter hint. On md and up the page has a fixed height, so in a short
     window the panel scrolls on its own and the footer stays visible. The shortcut works and follows the same rules
-    as the button. In M6 the balance goes under the estimate, in a warning color when it isn't enough.
+    as the button. In M6 (out of scope) the balance goes under the estimate, in a warning color when it isn't enough.
   - The area on the right: a plain title and the history as cards; a centered empty state with an icon, a title
     and one line of guidance.
   - Out of scope: model picker, video/audio tabs, upscale, number of generations, projects, search and the
@@ -304,11 +316,12 @@ exempt from these folder rules.
 - Images are not downloaded (the task allows them to expire).
 - Known risk: a generation can end without a final state on our side while Pixelforge billed it (the submit job gave
   up after an hour of uncertain outcomes, or polling ran out of attempts with no webhook). Our records then don't
-  match `GET /v1/usage` for that day. The M7 admin report flags those days; a "Check status" action or a sweep that
-  matches `GET /v1/generations` by `metadata.generation_id` is a next step. The README lists it under "Left out and
+  match `GET /v1/usage` for that day. The M5 cost check catches those days by hand (the out-of-scope M7 report would
+  flag them); a "Check status" action or a sweep that matches `GET /v1/generations` by `metadata.generation_id` is a
+  next step. The README lists it under "Left out and
   next steps".
 
-### Credits (M6)
+### Credits (M6, out of scope: planned design)
 
 - New users start at $0.00 and see "Buy credits to start". "Buy credits" offers fixed packs of $5, $10 and $25 (a
   fake purchase). The demo user starts with $10.00.
@@ -461,11 +474,11 @@ state; four generations at once show one waiting for a slot.
 - `DemoUserSeeder`: no factories (Faker isn't installed in production), idempotent: it creates the user by
   `config('demo.email')` (`demo@example.com`) only when missing, with the password from `config('demo.password')`
   (`DEMO_USER_PASSWORD`, read in `config/demo.php` so it works with a cached config), and makes sure it is an admin;
-  running it again changes nothing, and it refuses to create the user without a password. Everything about the demo
-  user lives in `config/demo.php` (in M6, its initial credit too); `config/app.php` stays the framework's. It runs in
-  the deploy commands, after the migrations; being idempotent, running it on every deploy changes nothing, and once
-  the user exists a missing `DEMO_USER_PASSWORD` doesn't break a deploy. The credentials go only in the submission
-  form, not in the README. In M6, the demo user's initial credit must be idempotent too.
+  running it again changes nothing, and it refuses to create the user without a password. Everything about the demo user
+  lives in `config/demo.php` (in the out-of-scope M6, its initial credit too); `config/app.php` stays the framework's.
+  It runs in the deploy commands, after the migrations; being idempotent, running it on every deploy changes nothing,
+  and once the user exists a missing `DEMO_USER_PASSWORD` doesn't break a deploy. The credentials go only in the
+  submission form, not in the README. If M6 is ever built, the demo user's initial credit must be idempotent too.
 - Deploy by pushing `main` (push-to-deploy), after the user's approval for that push. Build:
   `composer install --no-dev --optimize-autoloader && npm ci && npm run build && php artisan optimize`. Deploy
   command: `php artisan migrate --force && php artisan db:seed --class=DemoUserSeeder --force`.
@@ -473,9 +486,9 @@ state; four generations at once show one waiting for a slot.
   `release()` with `Retry-After` works (`[overloaded]`) and delayed polling works (`[slow]`).
 - Keyword scenarios on production: one generation each for `[succeed]`, `[fail]`, `[duplicate]`, `[slow]`,
   `[blocked]` and `[overloaded]`, checking the final state, one row per webhook event id and the charge.
-- Cost check: this read-only query runs on the production database (through `cloud tinker` after the user approves
-  it, or by the user with a SQL client); the user runs `GET /v1/usage` with the production key and pastes only the
-  result; every UTC day must match exactly (generations, tokens and `cost_usd`). In M7 the admin report makes this
+- Cost check: this read-only query runs on the production database (through `cloud tinker` after the user approves it,
+  or by the user with a SQL client); the user runs `GET /v1/usage` with the production key and pastes only the result;
+  every UTC day must match exactly (generations, tokens and `cost_usd`). The out-of-scope M7 report would automate this
   comparison.
 
   ```sql
@@ -494,16 +507,18 @@ state; four generations at once show one waiting for a slot.
   ```
 - README: the sections in `CLAUDE.md`, with commands the agent ran from a clean state (`docker compose down -v`, only
   at the end of M5, after the production check); the user runs the ngrok tunnel and confirms.
+- README "Left out and next steps" includes the two stretch goals, one line each with the planned design (see
+  Scope), and the known risk of generations billed by Pixelforge that never reach a final state on our side.
 - Leave a few generations on production.
 Manual: the production numbers match the Pixelforge dashboard for the production key.
 
-**M6 – Stretch: balances**
+**M6 – Stretch: balances (out of scope; planned design kept as reference)**
 `credit_transactions`, `PurchaseCredits`, `ReserveCredits` (in `CreateGeneration`, locking the user row),
 `SettleCharge` / `ReleaseReservation` (in `ApplyProviderGeneration`), balance in the header and "Buy credits",
 Generate blocked when the balance is below the max estimate.
 Tests: reservation, settlement to the actual charge, release on failure, concurrent requests cannot overspend.
 
-**M7 – Stretch: admin report**
+**M7 – Stretch: admin report (out of scope; planned design kept as reference)**
 Admin-only page (Gate on `is_admin`): per UTC completion day and per user, generations, credit spend (charges),
 provider cost and profit, plus Pixelforge's `cost_usd` from `GET /v1/usage` for the same days, flagging any
 difference.

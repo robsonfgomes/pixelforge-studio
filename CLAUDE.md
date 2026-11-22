@@ -13,8 +13,9 @@ Read before any task:
 
 ## Scope
 
-The scope is the whole assignment, including both stretch goals (admin report and balances), in this order: every
-required feature working, tested and deployed first; stretch goals after. Correct money beats features and polish.
+The scope is every required feature of the assignment, working, tested and deployed. Both stretch goals (admin
+report and balances) are out of scope, for lack of time; their planned design stays in `docs/SPEC.md` as reference.
+Correct money beats features and polish.
 
 ## Working rules
 
