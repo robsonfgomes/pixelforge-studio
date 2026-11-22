@@ -9,6 +9,7 @@ use App\Domain\Generations\Data\ProviderGenerationData;
 use App\Domain\Generations\Data\WebhookEventData;
 use App\Domain\Generations\Enums\GenerationStatus;
 use App\Domain\Generations\Models\Generation;
+use App\Integrations\Pixelforge\Exceptions\PixelforgeOverloaded;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeRateLimited;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeRejected;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeUnavailable;
@@ -17,6 +18,7 @@ use App\Jobs\PollGenerationJob;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\Attributes\TestWith;
 use Tests\Fakes\FakePixelforgeApi;
@@ -109,6 +111,29 @@ class PollGenerationJobTest extends TestCase
 
         $job->assertReleased(delay: 7);
         Queue::assertNotPushed(PollGenerationJob::class);
+    }
+
+    #[Test]
+    #[TestWith([2, 2])]
+    #[TestWith([null, 10])]
+    public function itWaitsOutAnOverloadWithoutSpendingAnAttempt(?int $retryAfter, int $delay): void
+    {
+        $pixelforge = $this->fakePixelforge();
+        $generation = Generation::factory()->processing()->create();
+        $pixelforge->respondToRetrieveWith(new PixelforgeOverloaded('Overloaded.', $retryAfter));
+
+        $job = $this->runJob($generation->id, attempt: 3);
+
+        $job->assertReleased(delay: $delay);
+        Queue::assertNotPushed(PollGenerationJob::class);
+    }
+
+    #[Test]
+    public function itBacksOffBetweenRetriesAfterAnUnexpectedError(): void
+    {
+        $job = new PollGenerationJob((string) Str::uuid7(), attempt: 1);
+
+        $this->assertSame([10, 30, 60], $job->backoff());
     }
 
     #[Test]

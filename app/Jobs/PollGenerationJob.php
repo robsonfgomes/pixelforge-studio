@@ -6,6 +6,7 @@ namespace App\Jobs;
 
 use App\Domain\Generations\Actions\ApplyProviderGeneration;
 use App\Domain\Generations\Models\Generation;
+use App\Integrations\Pixelforge\Exceptions\PixelforgeOverloaded;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeRateLimited;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeRejected;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeUnavailable;
@@ -35,7 +36,17 @@ class PollGenerationJob implements ShouldBeUniqueUntilProcessing, ShouldQueueAft
     }
 
     /**
-     * Bounds the releases on 429, which don't spend a polling attempt.
+     * Seconds between retries after an unexpected error; the planned polling delays don't depend on it.
+     *
+     * @return list<int>
+     */
+    public function backoff(): array
+    {
+        return [10, 30, 60];
+    }
+
+    /**
+     * Bounds the releases on 429 and 503 `overloaded`, which don't spend a polling attempt.
      */
     public function retryUntil(): DateTimeInterface
     {
@@ -52,7 +63,7 @@ class PollGenerationJob implements ShouldBeUniqueUntilProcessing, ShouldQueueAft
 
         try {
             $providerGeneration = $pixelforge->retrieveGeneration($generation->pixelforge_id);
-        } catch (PixelforgeRateLimited $exception) {
+        } catch (PixelforgeRateLimited|PixelforgeOverloaded $exception) {
             $this->release($exception->retryAfterSeconds ?? self::RATE_LIMIT_FALLBACK_SECONDS);
 
             return;

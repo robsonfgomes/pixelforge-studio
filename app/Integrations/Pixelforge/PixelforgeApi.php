@@ -31,6 +31,7 @@ interface PixelforgeApi
 
     /**
      * @throws PixelforgeRateLimited
+     * @throws PixelforgeOverloaded
      * @throws PixelforgeRejected e.g. `not_found`
      * @throws PixelforgeUnavailable
      */
