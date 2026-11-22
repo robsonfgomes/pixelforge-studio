@@ -181,8 +181,9 @@ exempt from these folder rules.
 - Generate is disabled while submitting, while the prompt is empty (no estimate request either: "Enter a prompt to see
   the cost"), while the estimate is invalid or unavailable, and until the estimate for the current input has arrived
   (debounce and request in flight), so the user always saw the price of what they send. Once the server accepts the
-  submission, the prompt is cleared; aspect ratio, quality and references stay. A rejected submission keeps the values
-  and shows the errors. Enabled buttons show the pointer cursor.
+  submission, the prompt and the reference images are cleared (each reference adds cost, so the next generation must
+  not inherit it unnoticed); aspect ratio and quality stay, as preferences that usually repeat. A rejected submission
+  keeps the values and shows the errors. Enabled buttons show the pointer cursor.
 - Aspect ratio 1:1 / 3:2 / 2:3 maps to `1024x1024` / `1536x1024` / `1024x1536`. Quality low / medium / high.
   The UI preselects 1:1 and medium; we always send both to Pixelforge. The UI does the aspect ratio mapping: our
   endpoints receive the Pixelforge size (`1024x1024`), validated by the `ImageSize` enum.
@@ -204,6 +205,8 @@ exempt from these folder rules.
   has the generation's aspect ratio (`aspect-square` for 1:1, 3:2 and 2:3 otherwise) and the image shows whole
   (`object-contain`), so the caption Pixelforge writes on it stays visible. A failed card has no image frame: a compact
   strip with the icon, the friendly reason and "You were not charged", and "Charged" reads "Not charged".
+  Cards align to the top of their grid row and keep their own height, so a failed card doesn't stretch to match an
+  image card beside it.
   `GenerationResource` sends `submissionState`: `waiting` (queued, `submit_attempts` 0), `waiting_for_slot` (queued, the
   last attempt hit `concurrency_limit_exceeded`: "Waiting for a free slot"), `retrying` (queued, any other answer) or
   `taking_longer` (not final, and either uncertain for longer than the uncertain-outcome window or older than the page
