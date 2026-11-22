@@ -114,15 +114,17 @@ class PollGenerationJobTest extends TestCase
     }
 
     #[Test]
-    #[TestWith([2, 2])]
-    #[TestWith([null, 10])]
-    public function itWaitsOutAnOverloadWithoutSpendingAnAttempt(?int $retryAfter, int $delay): void
+    #[TestWith([2, 1, 2])]
+    #[TestWith([null, 1, 2])]
+    #[TestWith([2, 4, 16])]
+    #[TestWith([2, 8, 60])]
+    public function itWaitsOutAnOverloadWithoutSpendingAnAttempt(?int $retryAfter, int $release, int $delay): void
     {
         $pixelforge = $this->fakePixelforge();
         $generation = Generation::factory()->processing()->create();
         $pixelforge->respondToRetrieveWith(new PixelforgeOverloaded('Overloaded.', $retryAfter));
 
-        $job = $this->runJob($generation->id, attempt: 3);
+        $job = $this->runJob($generation->id, attempt: 3, release: $release);
 
         $job->assertReleased(delay: $delay);
         Queue::assertNotPushed(PollGenerationJob::class);
@@ -208,9 +210,11 @@ class PollGenerationJobTest extends TestCase
         return $pixelforge;
     }
 
-    private function runJob(string $generationId, int $attempt): PollGenerationJob
+    private function runJob(string $generationId, int $attempt, int $release = 1): PollGenerationJob
     {
+        config(['generations.retry_backoff.max_jitter_percent' => 0]);
         $job = (new PollGenerationJob($generationId, $attempt))->withFakeQueueInteractions();
+        $job->job->attempts = $release;
 
         $this->app->call([$job, 'handle']);
 

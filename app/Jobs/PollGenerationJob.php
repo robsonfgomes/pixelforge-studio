@@ -11,6 +11,7 @@ use App\Integrations\Pixelforge\Exceptions\PixelforgeRateLimited;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeRejected;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeUnavailable;
 use App\Integrations\Pixelforge\PixelforgeApi;
+use App\Jobs\Concerns\BacksOffFromPixelforge;
 use DateTimeInterface;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
@@ -24,9 +25,7 @@ use Illuminate\Support\Facades\Log;
  */
 class PollGenerationJob implements ShouldBeUniqueUntilProcessing, ShouldQueueAfterCommit
 {
-    use Queueable;
-
-    private const int RATE_LIMIT_FALLBACK_SECONDS = 10;
+    use BacksOffFromPixelforge, Queueable;
 
     public function __construct(public readonly string $generationId, public readonly int $attempt) {}
 
@@ -64,7 +63,10 @@ class PollGenerationJob implements ShouldBeUniqueUntilProcessing, ShouldQueueAft
         try {
             $providerGeneration = $pixelforge->retrieveGeneration($generation->pixelforge_id);
         } catch (PixelforgeRateLimited|PixelforgeOverloaded $exception) {
-            $this->release($exception->retryAfterSeconds ?? self::RATE_LIMIT_FALLBACK_SECONDS);
+            $this->release($this->retryDelaySeconds(
+                $exception->retryAfterSeconds,
+                $exception instanceof PixelforgeRateLimited ? $exception->errorCode : null,
+            ));
 
             return;
         } catch (PixelforgeRejected $exception) {

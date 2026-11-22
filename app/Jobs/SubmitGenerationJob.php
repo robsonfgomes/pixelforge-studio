@@ -11,6 +11,7 @@ use App\Domain\Generations\Models\Generation;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeOverloaded;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeRateLimited;
 use App\Integrations\Pixelforge\Exceptions\PixelforgeUnavailable;
+use App\Jobs\Concerns\BacksOffFromPixelforge;
 use DateTimeInterface;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
@@ -26,9 +27,7 @@ use Throwable;
 #[UniqueFor(70 * 60)]
 class SubmitGenerationJob implements ShouldBeUnique, ShouldQueueAfterCommit
 {
-    use Queueable;
-
-    private const int MAX_BACKOFF_SECONDS = 60;
+    use BacksOffFromPixelforge, Queueable;
 
     public function __construct(public readonly string $generationId) {}
 
@@ -65,9 +64,12 @@ class SubmitGenerationJob implements ShouldBeUnique, ShouldQueueAfterCommit
                 return;
             }
 
-            $this->release($exception->retryAfterSeconds ?? $this->backoffSeconds());
+            $this->release($this->retryDelaySeconds(
+                $exception->retryAfterSeconds,
+                $exception instanceof PixelforgeRateLimited ? $exception->errorCode : null,
+            ));
         } catch (PixelforgeUnavailable) {
-            $this->release($this->backoffSeconds());
+            $this->release($this->retryDelaySeconds(retryAfterSeconds: null));
         }
     }
 
@@ -84,10 +86,5 @@ class SubmitGenerationJob implements ShouldBeUnique, ShouldQueueAfterCommit
         $submitWindowMinutes = (int) config('generations.submit_retry_window_minutes');
 
         return $generation->created_at?->addMinutes($submitWindowMinutes)->isPast() ?? true;
-    }
-
-    private function backoffSeconds(): int
-    {
-        return min(self::MAX_BACKOFF_SECONDS, 2 ** $this->attempts());
     }
 }

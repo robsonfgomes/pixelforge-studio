@@ -53,6 +53,56 @@ class SubmitGenerationJobTest extends TestCase
     }
 
     #[Test]
+    #[TestWith(['overloaded', 2, 4, 16])]
+    #[TestWith(['rate limited', 7, 1, 7])]
+    #[TestWith(['rate limited', 7, 4, 16])]
+    #[TestWith(['overloaded', 2, 6, 60])]
+    #[TestWith(['overloaded', 2, 9, 60])]
+    public function itWaitsTheLongerOfRetryAfterAndAGrowingBackoff(
+        string $answer,
+        int $retryAfter,
+        int $attempt,
+        int $delay,
+    ): void {
+        $generation = Generation::factory()->create();
+        $this->fakePixelforge()->respondToCreateWith($this->nothingWasCreated($answer, $retryAfter));
+
+        $job = $this->runJob($generation->id, attempt: $attempt);
+
+        $job->assertReleased(delay: $delay);
+    }
+
+    #[Test]
+    #[TestWith([1, 5])]
+    #[TestWith([3, 8])]
+    #[TestWith([4, 16])]
+    #[TestWith([5, 20])]
+    #[TestWith([9, 20])]
+    public function itCapsTheBackoffAtTwentySecondsWhileWaitingForAFreeSlot(int $attempt, int $delay): void
+    {
+        $generation = Generation::factory()->create();
+        $this->fakePixelforge()->respondToCreateWith(
+            new PixelforgeRateLimited('concurrency_limit_exceeded', 'Too many generations in progress.', 5),
+        );
+
+        $job = $this->runJob($generation->id, attempt: $attempt);
+
+        $job->assertReleased(delay: $delay);
+    }
+
+    #[Test]
+    public function itAddsUpToTwentyPercentOfJitter(): void
+    {
+        $generation = Generation::factory()->create();
+        $this->fakePixelforge()->respondToCreateWith($this->nothingWasCreated('overloaded', retryAfter: 2));
+
+        $job = $this->runJob($generation->id, attempt: 6, maxJitterPercent: 20);
+
+        $this->assertGreaterThanOrEqual(60, $job->job->releaseDelay);
+        $this->assertLessThanOrEqual(72, $job->job->releaseDelay);
+    }
+
+    #[Test]
     #[TestWith([1, 2])]
     #[TestWith([3, 8])]
     #[TestWith([6, 60])]
@@ -162,8 +212,9 @@ class SubmitGenerationJobTest extends TestCase
         return $pixelforge;
     }
 
-    private function runJob(string $generationId, int $attempt = 1): SubmitGenerationJob
+    private function runJob(string $generationId, int $attempt = 1, int $maxJitterPercent = 0): SubmitGenerationJob
     {
+        config(['generations.retry_backoff.max_jitter_percent' => $maxJitterPercent]);
         $job = (new SubmitGenerationJob($generationId))->withFakeQueueInteractions();
         $job->job->attempts = $attempt;
 
