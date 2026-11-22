@@ -84,7 +84,7 @@ app/
 │   │   │                   RecordWebhookEvent
 │   │   ├── Data/           GenerationRequestData, ProviderGenerationData, WebhookEventData
 │   │   ├── Enums/          GenerationStatus, GenerationFailureReason, ImageSize, ImageQuality
-│   │   ├── Exceptions/
+│   │   ├── Exceptions/     InvalidProviderGeneration, InvalidWebhookEvent
 │   │   ├── Models/         Generation, WebhookEvent
 │   │   └── QueryBuilders/  GenerationQueryBuilder (forUser, inProgress, recentlyActive)
 │   ├── Pricing/
@@ -102,13 +102,14 @@ app/
 │   ├── HttpPixelforgeClient.php
 │   ├── WebhookSignature.php
 │   └── Exceptions/                 PixelforgeRateLimited, PixelforgeOverloaded, PixelforgeRejected,
-│                                   PixelforgeUnavailable
+│                                   PixelforgeUnavailable, InvalidPixelforgeSignature, PixelforgeWebhookSecretMissing
 ├── Http/
-│   ├── Controllers/        GenerationController, GenerationEstimateController, PixelforgeWebhookController,
-│   │                       (M6) CreditPurchaseController, (M7) Admin/ReportController
-│   ├── Requests/           StoreGenerationRequest, EstimateGenerationRequest
+│   ├── Concerns/           FormatsMoney (exact + display value; used by resources and view models)
+│   ├── Controllers/        LandingController, GenerationController, GenerationEstimateController,
+│   │                       PixelforgeWebhookController, (M6) CreditPurchaseController, (M7) Admin/ReportController
+│   ├── Requests/           StoreGenerationRequest, EstimateGenerationRequest, Concerns/ValidatesGenerationRequests
 │   ├── Resources/          GenerationResource, CostEstimateResource
-│   └── ViewModels/         GenerationPageViewModel, (M7) AdminReportViewModel
+│   └── ViewModels/         LandingPageViewModel, GenerationPageViewModel, (M7) AdminReportViewModel
 └── Jobs/                   SubmitGenerationJob, PollGenerationJob
 tests/Fakes/FakePixelforgeApi.php
 ```
@@ -163,6 +164,8 @@ exempt from these folder rules.
     and one line of guidance.
   - Out of scope: model picker, video/audio tabs, upscale, number of generations, projects, search and the
     grid/list toggle (the last two are next steps).
+- Submitting past our own throttle (429) shows "You are generating too fast. Please wait a moment and try again."
+  in the composer footer instead of an error page.
 - Generate is disabled while submitting, while the prompt is empty (no estimate request either: "Enter a prompt to
   see the cost"), while the estimate is invalid or unavailable, and until the estimate for the current input has
   arrived (debounce and request in flight), so the user always saw the price of what they send. Once the server
@@ -185,15 +188,18 @@ exempt from these folder rules.
   `data.min`, `data.typical` and `data.max`, each `{amount, display}`; with no price table it answers 503
   "Estimate unavailable".
 - History: the user's 50 most recent generations, newest first (pagination or infinite scroll are next steps).
-- History card: prompt, size, quality, status badge, estimated and actual cost, the image, timestamps. The image
-  frame has the generation's aspect ratio (`aspect-square` for 1:1, 3:2 and 2:3 otherwise) and the image shows whole
-  (`object-contain`), so the caption Pixelforge writes on it stays visible. A failed card has no image frame: a
-  compact strip with the icon, the friendly reason and "You were not charged", and "Charged" reads "Not charged".
-  `GenerationResource` sends `submissionState`: `waiting` (queued, `submit_attempts` 0), `retrying` (queued,
-  attempts > 0) or `taking_longer` (not final, and either uncertain for longer than the uncertain-outcome window or
-  older than the page polling window). Failed cards show the friendly reason (`failureMessage`) and "You were not
-  charged". The server sends `imageUrlExpiresAt`; the card shows an "Image expired" placeholder once it has passed or
-  when the image fails to load.
+- History card: prompt, size, quality, status badge, estimated and actual cost, the image, timestamps. The image frame
+  has the generation's aspect ratio (`aspect-square` for 1:1, 3:2 and 2:3 otherwise) and the image shows whole
+  (`object-contain`), so the caption Pixelforge writes on it stays visible. A failed card has no image frame: a compact
+  strip with the icon, the friendly reason and "You were not charged", and "Charged" reads "Not charged".
+  `GenerationResource` sends `submissionState`: `waiting` (queued, `submit_attempts` 0), `waiting_for_slot` (queued, the
+  last attempt hit `concurrency_limit_exceeded`: "Waiting for a free slot"), `retrying` (queued, any other answer) or
+  `taking_longer` (not final, and either uncertain for longer than the uncertain-outcome window or older than the page
+  polling window). It receives both windows through its constructor, from the view model. It also sends
+  `durationSeconds` (from our creation to Pixelforge's completion, so it includes any wait to be submitted), shown as
+  "Completed in 18 s" or "Failed after 12 s" next to the date. Failed cards show the friendly reason (`failureMessage`)
+  and "You were not charged". The server sends `imageUrlExpiresAt`; the card shows an "Image expired" placeholder once
+  it has passed or when the image fails to load.
 - The page polls `generations` and `hasInProgress` every 2.5 s (`usePoll`, `mode: 'rest'`, started and stopped by
   `hasInProgress`). `hasInProgress` uses `recentlyActive()`: not final and created within the page polling window
   (`config/generations.php`, 120 minutes). `inProgress()` keeps its domain meaning (not final).
@@ -278,6 +284,11 @@ exempt from these folder rules.
   the status. Out of attempts: log a warning and keep the last status.
 - `ApplyProviderGeneration` fills `pixelforge_id` and `rates` when they are empty, but never `submitted_at`: only our
   own create response sets it, so the submit job still finishes its cycle and starts polling when a webhook beats it.
+- A retry of `SubmitGeneration` that finds `submitted_at` set and the generation not final dispatches poll attempt 1
+  again: the run that recorded the 202 may have died before starting the polling. The poll job's uniqueness keeps it
+  to one chain.
+- `PollGenerationJob` treats a 503 `overloaded` like a 429 (release with `Retry-After`, 10 s without it, no attempt
+  spent) and retries unexpected errors with `backoff()` 10, 30 and 60 s, within its 10-minute `retryUntil()`.
 - Webhook route `POST /webhooks/pixelforge` lives in `routes/webhooks.php`, loaded by `bootstrap/app.php` with no
   middleware: no auth, no CSRF, no session, no throttle. Signature: HMAC-SHA256 of `"<t>.<raw body>"`, `hash_equals`,
   `|now - t| <= 300` s, otherwise 400. A body that is not a valid event (even with a valid signature) → 400 and an
@@ -291,6 +302,11 @@ exempt from these folder rules.
   allowed (a `processing` event may be lost or late). Final states never change.
 - `completed_at` comes from Pixelforge, not from when we received it (the report groups by UTC completion day).
 - Images are not downloaded (the task allows them to expire).
+- Known risk: a generation can end without a final state on our side while Pixelforge billed it (the submit job gave
+  up after an hour of uncertain outcomes, or polling ran out of attempts with no webhook). Our records then don't
+  match `GET /v1/usage` for that day. The M7 admin report flags those days; a "Check status" action or a sweep that
+  matches `GET /v1/generations` by `metadata.generation_id` is a next step. The README lists it under "Left out and
+  next steps".
 
 ### Credits (M6)
 
@@ -375,6 +391,7 @@ All amounts are `bigint` nanodollars (cast to `Money`).
 | `error_code`, `error_message` | string / text, nullable | Pixelforge's code and message, or ours (no UI copy) |
 | `submit_attempts` | integer, default 0 | answers other than a 202 |
 | `submission_uncertain_at` | timestamp, nullable | first uncertain submit outcome |
+| `last_submit_error_code` | string, nullable | why the last attempt had no 202 (`overloaded`, `uncertain`, or a code) |
 | `submitted_at`, `started_at`, `completed_at` | timestamp, nullable | `completed_at` from Pixelforge |
 | `created_at`, `updated_at` | timestamp | |
 
