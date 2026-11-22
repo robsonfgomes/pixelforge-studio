@@ -95,9 +95,10 @@ function generate(): void {
         return;
     }
 
-    composerForm
-        .transform(currentInput)
-        .submit(store(), { preserveScroll: true });
+    composerForm.transform(currentInput).submit(store(), {
+        preserveScroll: true,
+        onSuccess: () => composerForm.reset(),
+    });
 }
 
 useEventListener(window, 'keydown', (event: KeyboardEvent) => {
