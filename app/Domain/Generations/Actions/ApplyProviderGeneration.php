@@ -6,11 +6,11 @@ namespace App\Domain\Generations\Actions;
 
 use App\Domain\Generations\Data\ProviderGenerationData;
 use App\Domain\Generations\Enums\GenerationStatus;
+use App\Domain\Generations\Exceptions\InvalidProviderGeneration;
 use App\Domain\Generations\Models\Generation;
 use App\Domain\Pricing\PricingCalculator;
 use App\Domain\Pricing\ValueObjects\Money;
 use Illuminate\Support\Facades\DB;
-use UnexpectedValueException;
 
 /**
  * Applies what Pixelforge reports about a generation (from a webhook, a poll or a create response). Statuses only
@@ -65,7 +65,7 @@ final readonly class ApplyProviderGeneration
         $usage = $providerGeneration->usage;
 
         if ($usage === null) {
-            throw new UnexpectedValueException("The succeeded generation [{$providerGeneration->id}] has no usage.");
+            throw InvalidProviderGeneration::succeededWithoutUsage($providerGeneration->id);
         }
 
         $providerCost = $this->calculator->providerCost($usage, $providerGeneration->rates);

@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace App\Domain\Generations\Data;
 
 use App\Domain\Generations\Enums\GenerationStatus;
+use App\Domain\Generations\Exceptions\InvalidProviderGeneration;
 use App\Domain\Pricing\Data\TokenCountsData;
 use App\Domain\Pricing\Data\TokenRatesData;
 use Carbon\CarbonImmutable;
-use UnexpectedValueException;
 
 final readonly class ProviderGenerationData
 {
@@ -37,7 +37,7 @@ final readonly class ProviderGenerationData
         $usage = $generation['usage'] ?? null;
 
         if ($status === GenerationStatus::Succeeded && ! is_array($usage)) {
-            throw new UnexpectedValueException("The succeeded generation [{$generation['id']}] has no usage.");
+            throw InvalidProviderGeneration::succeededWithoutUsage((string) $generation['id']);
         }
 
         return new self(

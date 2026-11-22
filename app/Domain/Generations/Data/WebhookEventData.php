@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Domain\Generations\Data;
 
-use UnexpectedValueException;
+use App\Domain\Generations\Exceptions\InvalidWebhookEvent;
 
 final readonly class WebhookEventData
 {
@@ -30,7 +30,7 @@ final readonly class WebhookEventData
         $type = $payload['type'] ?? null;
 
         if (! is_string($id) || $id === '' || ! is_string($type) || $type === '') {
-            throw new UnexpectedValueException('The webhook body is not a Pixelforge event.');
+            throw InvalidWebhookEvent::missingIdOrType();
         }
 
         $isGenerationEvent = str_starts_with($type, 'generation.');
