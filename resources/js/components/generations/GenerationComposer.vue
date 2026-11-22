@@ -102,7 +102,7 @@ function generate(): void {
 
     composerForm.transform(currentInput).submit(store(), {
         preserveScroll: true,
-        onSuccess: () => composerForm.reset('prompt'),
+        onSuccess: () => composerForm.reset('prompt', 'reference_images'),
         onHttpException: (response) => {
             if (response.status !== 429) {
                 return;
