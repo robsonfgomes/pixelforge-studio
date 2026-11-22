@@ -256,8 +256,12 @@ exempt from these folder rules.
 - HTTP client timeouts: 10 s to connect, 30 s per request.
 - `SubmitGenerationJob`: `ShouldBeUnique` by generation id (`UniqueFor` 70 minutes, so a dead worker can't keep the
   lock), `retryUntil()` = creation + the uncertain-outcome window (60 minutes); the 10-minute submit window is checked
-  inside the job. Released with the `Retry-After` header on 429/503; exponential backoff from 2 s capped at 60 s when
-  the header is missing and after an uncertain outcome.
+  inside the job. After a 429/503 or an uncertain outcome it is released for the longer of `Retry-After` and a
+  backoff that doubles on each attempt (2, 4, 8, 16, 32, 60 s; capped at 60 s, or 20 s for
+  `concurrency_limit_exceeded` so a generation doesn't wait long after a slot frees), plus 0-20% jitter so refused
+  generations don't retry in the same second. Pixelforge asks to back off further each time, not only to obey
+  `Retry-After`. The base, caps and jitter live in `config/generations.php` (`retry_backoff`); both jobs share them
+  through the `BacksOffFromPixelforge` trait.
 - Answers are classified as:
   - "Nothing was created": 429 `rate_limit_exceeded` / `concurrency_limit_exceeded`, 503 `overloaded`. Release.
   - Definitive: 400 `content_policy_violation`, 429 `daily_limit_exceeded`, 422 `validation_failed`, 409
@@ -299,8 +303,9 @@ exempt from these folder rules.
 - A retry of `SubmitGeneration` that finds `submitted_at` set and the generation not final dispatches poll attempt 1
   again: the run that recorded the 202 may have died before starting the polling. The poll job's uniqueness keeps it
   to one chain.
-- `PollGenerationJob` treats a 503 `overloaded` like a 429 (release with `Retry-After`, 10 s without it, no attempt
-  spent) and retries unexpected errors with `backoff()` 10, 30 and 60 s, within its 10-minute `retryUntil()`.
+- `PollGenerationJob` treats a 503 `overloaded` like a 429 (released with the same `Retry-After` + growing backoff +
+  jitter, no polling attempt spent) and retries unexpected errors with `backoff()` 10, 30 and 60 s, within its
+  10-minute `retryUntil()`.
 - Webhook route `POST /webhooks/pixelforge` lives in `routes/webhooks.php`, loaded by `bootstrap/app.php` with no
   middleware: no auth, no CSRF, no session, no throttle. Signature: HMAC-SHA256 of `"<t>.<raw body>"`, `hash_equals`,
   `|now - t| <= 300` s, otherwise 400. A body that is not a valid event (even with a valid signature) → 400 and an
