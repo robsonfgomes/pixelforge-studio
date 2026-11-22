@@ -41,7 +41,7 @@ watch(
 
             <div
                 v-if="generations.length === 0"
-                class="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center"
+                class="flex flex-col items-center gap-3 py-16 text-center"
             >
                 <div
                     class="flex size-12 items-center justify-center rounded-full bg-muted"
