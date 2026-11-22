@@ -45,6 +45,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string|null $error_code
  * @property string|null $error_message
  * @property int $submit_attempts
+ * @property string|null $last_submit_error_code
  * @property CarbonImmutable|null $submission_uncertain_at
  * @property CarbonImmutable|null $submitted_at
  * @property CarbonImmutable|null $started_at

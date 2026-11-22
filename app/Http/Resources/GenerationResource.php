@@ -20,6 +20,19 @@ class GenerationResource extends JsonResource
     use FormatsMoney;
 
     /**
+     * Pixelforge's code for "too many generations in progress": the generation waits for a free slot.
+     */
+    private const string CONCURRENCY_LIMIT_EXCEEDED = 'concurrency_limit_exceeded';
+
+    public function __construct(
+        Generation $generation,
+        private readonly int $uncertainOutcomeWindowMinutes,
+        private readonly int $pagePollingWindowMinutes,
+    ) {
+        parent::__construct($generation);
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function toArray(Request $request): array
@@ -46,6 +59,7 @@ class GenerationResource extends JsonResource
                 : null,
             'createdAt' => $generation->created_at?->toIso8601String(),
             'completedAt' => $generation->completed_at?->toIso8601String(),
+            'durationSeconds' => $this->durationSeconds($generation),
         ];
     }
 
@@ -64,7 +78,11 @@ class GenerationResource extends JsonResource
         }
 
         if ($generation->status === GenerationStatus::Queued && $generation->submitted_at === null) {
-            return $generation->submit_attempts === 0 ? 'waiting' : 'retrying';
+            return match (true) {
+                $generation->submit_attempts === 0 => 'waiting',
+                $generation->last_submit_error_code === self::CONCURRENCY_LIMIT_EXCEEDED => 'waiting_for_slot',
+                default => 'retrying',
+            };
         }
 
         return null;
@@ -72,11 +90,21 @@ class GenerationResource extends JsonResource
 
     private function isTakingLonger(Generation $generation): bool
     {
-        $uncertainWindowMinutes = (int) config('generations.uncertain_outcome_retry_window_minutes');
-        $pagePollingWindowMinutes = (int) config('generations.page_polling_window_minutes');
         $uncertainSince = $generation->submission_uncertain_at;
 
-        return ($uncertainSince !== null && $uncertainSince->addMinutes($uncertainWindowMinutes)->isPast())
-            || ($generation->created_at?->addMinutes($pagePollingWindowMinutes)->isPast() ?? false);
+        return ($uncertainSince !== null && $uncertainSince->addMinutes($this->uncertainOutcomeWindowMinutes)->isPast())
+            || ($generation->created_at?->addMinutes($this->pagePollingWindowMinutes)->isPast() ?? false);
+    }
+
+    /**
+     * From the user's click to Pixelforge's completion, so it includes any time waiting to be submitted.
+     */
+    private function durationSeconds(Generation $generation): ?int
+    {
+        if ($generation->completed_at === null || $generation->created_at === null) {
+            return null;
+        }
+
+        return max(0, (int) $generation->created_at->diffInSeconds($generation->completed_at));
     }
 }

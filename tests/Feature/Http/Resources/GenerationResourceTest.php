@@ -21,13 +21,14 @@ class GenerationResourceTest extends TestCase
     {
         $this->freezeSecond();
         $generation = Generation::factory()->succeeded()->create([
+            'completed_at' => now()->addSeconds(18),
             'prompt' => 'A lighthouse on a cliff at dawn, oil painting',
             'size' => ImageSize::Landscape,
             'quality' => ImageQuality::High,
             'image_url' => 'https://pixelforge.promptedit.dev/images/lighthouse.png',
         ]);
 
-        $data = (new GenerationResource($generation->refresh()))->resolve();
+        $data = $this->resolve($generation);
 
         $this->assertSame([
             'id' => $generation->id,
@@ -44,7 +45,8 @@ class GenerationResourceTest extends TestCase
             'imageUrlExpiresAt' => now()->addDay()->toIso8601String(),
             'failureMessage' => null,
             'createdAt' => now()->toIso8601String(),
-            'completedAt' => now()->toIso8601String(),
+            'completedAt' => now()->addSeconds(18)->toIso8601String(),
+            'durationSeconds' => 18,
         ], $data);
     }
 
@@ -53,7 +55,7 @@ class GenerationResourceTest extends TestCase
     {
         $generation = Generation::factory()->failed('content_policy_violation', 'The prompt was rejected.')->create();
 
-        $data = (new GenerationResource($generation->refresh()))->resolve();
+        $data = $this->resolve($generation);
 
         $this->assertSame('failed', $data['status']);
         $this->assertSame('Prompt rejected by the content policy', $data['failureMessage']);
@@ -65,7 +67,7 @@ class GenerationResourceTest extends TestCase
     {
         $generation = Generation::factory()->processing()->create();
 
-        $data = (new GenerationResource($generation->refresh()))->resolve();
+        $data = $this->resolve($generation);
 
         $this->assertNull($data['charge']);
         $this->assertNull($data['failureMessage']);
@@ -113,8 +115,39 @@ class GenerationResourceTest extends TestCase
         $this->assertNull($this->submissionStateOf($processing));
     }
 
+    #[Test]
+    public function itSaysAQueuedGenerationIsWaitingForAFreeSlotWhenPixelforgeIsAtItsConcurrencyLimit(): void
+    {
+        $generation = Generation::factory()->create([
+            'submit_attempts' => 2,
+            'last_submit_error_code' => 'concurrency_limit_exceeded',
+        ]);
+
+        $this->assertSame('waiting_for_slot', $this->submissionStateOf($generation));
+    }
+
+    #[Test]
+    public function itHasNoDurationBeforeTheGenerationFinishes(): void
+    {
+        $generation = Generation::factory()->processing()->create();
+
+        $this->assertNull($this->resolve($generation)['durationSeconds']);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function resolve(Generation $generation): array
+    {
+        return (new GenerationResource(
+            $generation->refresh(),
+            uncertainOutcomeWindowMinutes: 60,
+            pagePollingWindowMinutes: 120,
+        ))->resolve();
+    }
+
     private function submissionStateOf(Generation $generation): ?string
     {
-        return (new GenerationResource($generation->refresh()))->resolve()['submissionState'];
+        return $this->resolve($generation)['submissionState'];
     }
 }

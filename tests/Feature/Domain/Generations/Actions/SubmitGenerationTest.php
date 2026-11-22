@@ -188,6 +188,7 @@ class SubmitGenerationTest extends TestCase
         $generation->refresh();
         $this->assertEquals(now(), $generation->submission_uncertain_at);
         $this->assertSame(1, $generation->submit_attempts);
+        $this->assertSame('uncertain', $generation->last_submit_error_code);
         $this->assertSame(GenerationStatus::Queued, $generation->status);
     }
 
@@ -208,7 +209,8 @@ class SubmitGenerationTest extends TestCase
     }
 
     #[Test]
-    #[TestWith(['rate limited'])]
+    #[TestWith(['rate_limit_exceeded'])]
+    #[TestWith(['concurrency_limit_exceeded'])]
     #[TestWith(['overloaded'])]
     public function itCountsANothingWasCreatedAnswerAndPassesItOn(string $answer): void
     {
@@ -216,13 +218,14 @@ class SubmitGenerationTest extends TestCase
         $generation = Generation::factory()->create();
         $exception = $answer === 'overloaded'
             ? new PixelforgeOverloaded('Pixelforge is temporarily overloaded.', 2)
-            : new PixelforgeRateLimited('rate_limit_exceeded', 'Slow down.', 7);
+            : new PixelforgeRateLimited($answer, 'Slow down.', 7);
         $pixelforge->respondToCreateWith($exception);
 
         $this->assertThrows(fn () => $this->submit($generation), $exception::class);
 
         $generation->refresh();
         $this->assertSame(1, $generation->submit_attempts);
+        $this->assertSame($answer, $generation->last_submit_error_code);
         $this->assertNull($generation->submission_uncertain_at);
         $this->assertSame(GenerationStatus::Queued, $generation->status);
     }
@@ -251,7 +254,22 @@ class SubmitGenerationTest extends TestCase
         $this->submit($generation);
 
         $this->assertSame([], $pixelforge->createRequests);
-        Queue::assertNotPushed(PollGenerationJob::class);
+    }
+
+    #[Test]
+    public function itMakesSurePollingRunsWhenARetryFindsTheGenerationAlreadySubmitted(): void
+    {
+        $this->fakePixelforge();
+        $generation = Generation::factory()->processing()->create();
+
+        $this->submit($generation);
+
+        Queue::assertPushed(
+            PollGenerationJob::class,
+            fn (PollGenerationJob $job): bool => $job->generationId === $generation->id
+                && $job->attempt === 1
+                && $job->delay === 45,
+        );
     }
 
     #[Test]
@@ -314,6 +332,7 @@ class SubmitGenerationTest extends TestCase
         $this->submit($generation);
 
         $this->assertSame([], $pixelforge->createRequests);
+        Queue::assertNotPushed(PollGenerationJob::class);
     }
 
     private function fakePixelforge(): FakePixelforgeApi

@@ -24,6 +24,13 @@ final readonly class SubmitGeneration
     /**
      * Rejections the user caused or Pixelforge's capacity explains; any other one means a bug or a misconfiguration.
      */
+    /**
+     * `last_submit_error_code` values of our own, next to Pixelforge's codes.
+     */
+    private const string OVERLOADED = 'overloaded';
+
+    private const string UNCERTAIN = 'uncertain';
+
     private const array EXPECTED_REJECTIONS = [
         GenerationFailureReason::ContentPolicyViolation,
         GenerationFailureReason::DailyLimitExceeded,
@@ -46,18 +53,31 @@ final readonly class SubmitGeneration
      */
     public function handle(Generation $generation): void
     {
-        if ($generation->status->isFinal() || $generation->submitted_at !== null) {
+        if ($generation->status->isFinal()) {
+            return;
+        }
+
+        if ($generation->submitted_at !== null) {
+            // A retry after the create response was recorded: the run that recorded it may have died before it
+            // started polling, the fallback for lost webhooks. The poll job is unique, so this never starts a second
+            // chain.
+            $this->startPolling($generation);
+
             return;
         }
 
         try {
             $providerGeneration = $this->pixelforge->createGeneration($this->requestFor($generation), $generation->id);
-        } catch (PixelforgeRateLimited|PixelforgeOverloaded $exception) {
-            $this->recordAttempt($generation, isUncertain: false);
+        } catch (PixelforgeRateLimited $exception) {
+            $this->recordAttempt($generation, $exception->errorCode, isUncertain: false);
+
+            throw $exception;
+        } catch (PixelforgeOverloaded $exception) {
+            $this->recordAttempt($generation, self::OVERLOADED, isUncertain: false);
 
             throw $exception;
         } catch (PixelforgeUnavailable $exception) {
-            $this->recordAttempt($generation, isUncertain: true);
+            $this->recordAttempt($generation, self::UNCERTAIN, isUncertain: true);
 
             throw $exception;
         } catch (PixelforgeRejected $rejection) {
@@ -67,6 +87,11 @@ final readonly class SubmitGeneration
         }
 
         $this->recordSubmission($generation, $providerGeneration);
+    }
+
+    private function startPolling(Generation $generation): void
+    {
+        PollGenerationJob::dispatch($generation->id, attempt: 1)->delay($this->firstPollDelaySeconds);
     }
 
     private function requestFor(Generation $generation): GenerationRequestData
@@ -82,7 +107,11 @@ final readonly class SubmitGeneration
     private function handleRejection(Generation $generation, PixelforgeRejected $rejection): void
     {
         $wasUncertain = $generation->submission_uncertain_at !== null;
-        $this->recordAttempt($generation, isUncertain: $wasUncertain);
+        $this->recordAttempt(
+            $generation,
+            $wasUncertain ? self::UNCERTAIN : $rejection->errorCode,
+            isUncertain: $wasUncertain,
+        );
 
         if ($wasUncertain) {
             throw PixelforgeUnavailable::afterUncertainOutcome($rejection);
@@ -100,11 +129,12 @@ final readonly class SubmitGeneration
         $this->failGeneration->handle($generation, $rejection->errorCode, $rejection->getMessage());
     }
 
-    private function recordAttempt(Generation $generation, bool $isUncertain): void
+    private function recordAttempt(Generation $generation, string $errorCode, bool $isUncertain): void
     {
-        DB::transaction(function () use ($generation, $isUncertain): void {
+        DB::transaction(function () use ($generation, $errorCode, $isUncertain): void {
             $locked = Generation::query()->whereKey($generation->getKey())->lockForUpdate()->firstOrFail();
             $locked->submit_attempts++;
+            $locked->last_submit_error_code = $errorCode;
 
             if ($isUncertain && $locked->submission_uncertain_at === null) {
                 $locked->submission_uncertain_at = now();
@@ -134,8 +164,7 @@ final readonly class SubmitGeneration
         $this->applyProviderGeneration->handle($generation, $providerGeneration);
 
         if ($setSubmittedAt && ! $generation->refresh()->status->isFinal()) {
-            PollGenerationJob::dispatch($generation->id, attempt: 1)
-                ->delay($this->firstPollDelaySeconds);
+            $this->startPolling($generation);
         }
 
         $estimatedRates = PriceTableData::fromArray($generation->estimate_price_table)->rates;

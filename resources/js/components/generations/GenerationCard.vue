@@ -24,6 +24,8 @@ const pendingLabel = computed(() => {
     switch (props.generation.submissionState) {
         case 'waiting':
             return 'Waiting to submit';
+        case 'waiting_for_slot':
+            return 'Waiting for a free slot';
         case 'retrying':
             return 'Retrying…';
         case 'taking_longer':
@@ -52,6 +54,23 @@ const createdAt = computed(() =>
         timeStyle: 'short',
     }),
 );
+
+const duration = computed(() => {
+    const seconds = props.generation.durationSeconds;
+
+    if (seconds === null) {
+        return null;
+    }
+
+    const text =
+        seconds < 60
+            ? `${seconds} s`
+            : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+
+    return props.generation.status === 'failed'
+        ? `Failed after ${text}`
+        : `Completed in ${text}`;
+});
 </script>
 
 <template>
@@ -121,7 +140,10 @@ const createdAt = computed(() =>
                     {{ generation.aspectRatio }}
                 </span>
                 <span class="capitalize">{{ generation.quality }}</span>
-                <span class="ml-auto">{{ createdAt }}</span>
+                <span class="ml-auto flex flex-col items-end">
+                    <span>{{ createdAt }}</span>
+                    <span v-if="duration">{{ duration }}</span>
+                </span>
             </div>
 
             <dl class="grid grid-cols-2 gap-2 text-xs">

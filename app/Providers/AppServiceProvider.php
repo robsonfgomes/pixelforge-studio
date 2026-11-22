@@ -58,6 +58,10 @@ class AppServiceProvider extends ServiceProvider
             ->needs('$pagePollingWindowMinutes')
             ->giveConfig('generations.page_polling_window_minutes');
 
+        $this->app->when(GenerationPageViewModel::class)
+            ->needs('$uncertainOutcomeWindowMinutes')
+            ->giveConfig('generations.uncertain_outcome_retry_window_minutes');
+
         $this->app->bind(WebhookSignature::class, fn (): WebhookSignature => new WebhookSignature(
             config('services.pixelforge.webhook_secret'),
         ));

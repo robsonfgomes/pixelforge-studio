@@ -6,7 +6,12 @@ export type Amount = {
 
 export type GenerationStatus = 'queued' | 'processing' | 'succeeded' | 'failed';
 
-export type SubmissionState = 'waiting' | 'retrying' | 'taking_longer' | null;
+export type SubmissionState =
+    | 'waiting'
+    | 'waiting_for_slot'
+    | 'retrying'
+    | 'taking_longer'
+    | null;
 
 export type Generation = {
     id: string;
@@ -24,6 +29,7 @@ export type Generation = {
     failureMessage: string | null;
     createdAt: string;
     completedAt: string | null;
+    durationSeconds: number | null;
 };
 
 export type ComposerOptions = {

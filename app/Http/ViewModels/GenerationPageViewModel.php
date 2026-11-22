@@ -25,6 +25,7 @@ final readonly class GenerationPageViewModel implements Arrayable
 
     public function __construct(
         #[CurrentUser] private User $user,
+        private int $uncertainOutcomeWindowMinutes,
         private int $pagePollingWindowMinutes,
     ) {}
 
@@ -35,7 +36,14 @@ final readonly class GenerationPageViewModel implements Arrayable
     {
         return [
             'composer' => $this->composer(),
-            'generations' => fn (): array => GenerationResource::collection($this->latestGenerations())->resolve(),
+            'generations' => fn (): array => array_map(
+                fn (Generation $generation): array => (new GenerationResource(
+                    $generation,
+                    $this->uncertainOutcomeWindowMinutes,
+                    $this->pagePollingWindowMinutes,
+                ))->resolve(),
+                $this->latestGenerations(),
+            ),
             'hasInProgress' => fn (): bool => Generation::query()
                 ->forUser($this->user)
                 ->recentlyActive(now()->subMinutes($this->pagePollingWindowMinutes))
@@ -66,15 +74,16 @@ final readonly class GenerationPageViewModel implements Arrayable
     }
 
     /**
-     * @return iterable<Generation>
+     * @return array<int, Generation>
      */
-    private function latestGenerations(): iterable
+    private function latestGenerations(): array
     {
         return Generation::query()
             ->forUser($this->user)
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->limit(self::HISTORY_LIMIT)
-            ->get();
+            ->get()
+            ->all();
     }
 }
